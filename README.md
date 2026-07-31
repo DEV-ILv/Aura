@@ -10,7 +10,7 @@ AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. I
 
 | Component | Interface | Pins (config.h) |
 |---|---|---|
-| OLED SSD1306 128x64 | I2C @ 0x3C | SDA 21 · SCL 22 |
+5.0" IPS Capacitive Touchscreen | 800×480 | 16.7M Colors | Multi-touch | LVGL-Based User Interface
 | Microphone INMP441 | I2S (mono 16-bit) | BCLK 26 · WS 25 · DATA 34 |
 | Speaker MAX98357A | I2S | BCLK 27 · LRC 14 · DATA 12 |
 | LED ring | GPIO (WS2812-style) | GPIO 4 |
