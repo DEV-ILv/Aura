@@ -1,0 +1,94 @@
+.file-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-bottom: 16px;
+}
+
+.file-zone:hover,
+.file-zone.drag {
+  border-color: var(--accent);
+  background: rgba(0,217,255,0.03);
+}
+
+.file-zone .material-symbols-outlined {
+  font-size: 40px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.file-zone p {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.file-zone p strong {
+  color: var(--text);
+}
+
+.file-info {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--card-hover);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.file-info.show {
+  display: flex;
+}
+
+.file-info .name {
+  flex: 1;
+  color: var(--text);
+}
+
+.file-info .size {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.prg-wrap {
+  display: none;
+  margin-top: 12px;
+}
+
+.prg-wrap.show {
+  display: block;
+}
+
+.prg-bar {
+  height: 4px;
+  background: var(--card-hover);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.prg-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+.prg-txt {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.ota-status {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
