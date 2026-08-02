@@ -1,4 +1,5 @@
 #include "offline_response_generator.h"
+#include "local_ai_engine.h"
 #include <WiFi.h>
 #include "memory_manager.h"
 #include "knowledge_graph_manager.h"
@@ -26,36 +27,12 @@ OfflineResponseGenerator::OfflineResponseGenerator() noexcept {}
 OfflineResponseGenerator::~OfflineResponseGenerator() noexcept {}
 
 String OfflineResponseGenerator::generate(const IntentResult& intent) noexcept {
-    switch (intent.type) {
-        case IntentType::GREETING:       return handleGreeting();
-        case IntentType::SMALL_TALK:     return handleSmallTalk();
-        case IntentType::CAPABILITIES:   return handleCapabilities();
-        case IntentType::REMINDER_QUERY: return handleReminderQuery();
-        case IntentType::GOAL_QUERY:     return handleGoalQuery();
-        case IntentType::HABIT_QUERY:    return handleHabitQuery();
-        case IntentType::PLANNER_QUERY:  return handlePlannerQuery();
-        case IntentType::MEMORY_QUERY:   return handleMemoryQuery(intent);
-        case IntentType::KNOWLEDGE_QUERY:return handleKnowledgeQuery(intent);
-        case IntentType::SETTINGS_QUERY: return handleSettingsQuery();
-        case IntentType::WIFI_STATUS:    return handleWifiStatus();
-        case IntentType::STORAGE_STATUS: return handleStorageStatus();
-        case IntentType::PERSONALITY_QUERY: return handlePersonalityQuery();
-        case IntentType::DECISION_QUERY: return handleDecisionQuery();
-        case IntentType::LEARNING_QUERY: return handleLearningQuery();
-        case IntentType::RECOMMENDATION_QUERY: return handleRecommendationQuery();
-        case IntentType::PREDICTION_QUERY: return handlePredictionQuery();
-        case IntentType::DOCUMENT_QUERY: return handleDocumentQuery();
-        case IntentType::WORKSPACE_QUERY: return handleWorkspaceQuery();
-        case IntentType::DEVELOPER_QUERY: return handleDeveloperQuery();
-        case IntentType::INTENT_STUDY:    return handleStudyQuery();
-        case IntentType::INTENT_FLASHCARD: return handleFlashcardQuery();
-        case IntentType::INTENT_QUIZ:     return handleQuizQuery();
-        case IntentType::INTENT_PAIR:     return handlePairQuery();
-        case IntentType::INTENT_SYNC:     return handleSyncQuery();
-        case IntentType::INTENT_DASHBOARD: return handleDashboardQuery();
-        case IntentType::INTENT_CREATE_SKILL: return handleCreateSkillQuery();
-        default:                          return handleUnknown();
-    }
+    // Phase 3 upgrade: delegate composition to the Local AI Engine V2.
+    // The engine keeps the Intent -> managers pipeline but adds context,
+    // memory/knowledge retrieval, recommendations, follow-ups, personality
+    // styling and guaranteed response variation. The dedicated handlers below
+    // remain available as a compatibility fallback.
+    return localAIEngine.generate(intent);
 }
 
 String OfflineResponseGenerator::handleGreeting() const noexcept {

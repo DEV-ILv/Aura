@@ -18,6 +18,12 @@ bool TinyAIManager::initialize() noexcept {
     m_initialized = true;
 
     LOG_INFO(kLogCategory, "Tiny AI engine initialized (offline fallback ready)");
+
+#if LOCAL_AI_SELF_TEST_ON_BOOT
+    String report = localAIEngine.runSelfTest();
+    LOG_INFO(kLogCategory, "Local AI self-test: %s", report.c_str());
+#endif
+
     return true;
 }
 
@@ -42,7 +48,11 @@ bool TinyAIManager::process(const String& userText, String& responseText) noexce
         return false;
     }
 
-    responseText = m_generator.generate(intent);
+    // Phase 3: route through the Local AI Engine V2 with raw text so it can
+    // track topic context and serve exact-repeat cache hits. The generator
+    // still delegates to the engine, preserving the Intent Classifier ->
+    // OfflineResponseGenerator -> managers architecture.
+    responseText = localAIEngine.generate(intent, userText);
 
     m_lastInferenceTimeMs = millis() - start;
     m_inferenceCount++;

@@ -20,7 +20,7 @@ AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. I
 ## Features
 
 - **Voice assistant:** wake via touch, INMP441 capture → Google STT → Gemini → Google TTS → MAX98357 speaker.
-- **Offline assistant:** `OfflineResponseGenerator` handles 26 intents (greetings, reminders, goals, habits, planner, memory, knowledge graph, decisions, learning, predictions, documents, workspaces, study, flashcards, quizzes, skills) when the cloud is unreachable.
+- **Offline assistant (Local AI Engine V2):** `LocalAIEngine` composes context-aware, personality-styled replies across all 28 intents via a multi-engine pipeline (Conversation Context → Memory/Knowledge retrieval → Planner → Goals → Recommendation Engine → Personality → Sentence Generation), with time-of-day awareness, follow-up questions, a response cache, and guaranteed response variation. `OfflineResponseGenerator` delegates to it, preserving the Intent Classifier → Generator → managers architecture when the cloud is unreachable.
 - **Web portal:** dashboard + REST/HTML configuration and CRUD for nearly every feature (token-authenticated).
 - **Signed OTA updates:** ECDSA P-256 + streaming SHA-256 verification before install.
 - **Productivity suite:** reminders, goals, habits, planner (Eisenhower), study sessions/flashcards, daily briefings, once-daily reflection, knowledge graph with auto-linking, documents, multi-member workspaces, semantic/unified search, decisions, learning insights, predictions, analytics, and proactive recommendations.
@@ -45,7 +45,33 @@ arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" Aura_pro
 
 > **Important:** the default partition scheme does not fit ("text section exceeds available space"). Use **Huge APP (3MB No OTA/1MB SPIFFS)** — in Arduino IDE: Tools → Partition Scheme → Huge APP.
 
-**Build metrics:** 1,919,575 / 3,145,728 bytes flash (61%) · 78,120 / 327,680 bytes RAM (23%) · 0 warnings.
+**Build metrics:** 1,938,167 / 3,145,728 bytes flash (61%) · 79,000 / 327,680 bytes RAM (24%) · 0 warnings.
+
+## Offline AI engine (Phase 3)
+
+The offline assistant runs a rule-based "micro language engine" (`LocalAIEngine`)
+as a drop-in upgrade over `OfflineResponseGenerator`. Pipeline:
+
+```
+Speech/Text → IntentClassifier → ConversationContextEngine → Memory retrieval
+→ Knowledge-graph retrieval → Planner → GoalManager → RecommendationEngine
+→ PersonalityEngine → SentenceGenerationEngine → Offline response
+```
+
+New components (`Aura_programs/`):
+
+| Component | Role |
+|---|---|
+| `local_ai_engine.h/.cpp` | Coordinator; composes all 28 intents, memory/knowledge/recommendation injection, follow-ups, self-test, status JSON |
+| `conversation_context_engine.h/.cpp` | Rolling topic/history + user state (project, task, mood, workspace, goal, reminder, study) + time-of-day awareness |
+| `sentence_generation_engine.h/.cpp` | Flash-resident fragment pools (CASUAL/NEUTRAL/FORMAL) with repeat avoidance and composition helpers |
+| `personality_engine.h/.cpp` | Maps `PersonalityManager` profiles → generation knobs (register, humour, verbosity, confidence) |
+| `recommendation_engine.h/.cpp` | Rule-based advisor: planner → habit → goal <40% → executive → prediction → learning |
+| `local_ai_cache.h/.cpp` | 8-slot FIFO response cache, last-response tracker, phrase frequency |
+
+Tunables live in `config.h` under `LOCAL_AI_*`. A 12-case self-test runs at boot
+(`LOCAL_AI_SELF_TEST_ON_BOOT`), and `/api/offline-ai/test` remains available from
+the web portal. See `CHANGELOG.md` for the full Phase 3 entry.
 
 ## Architecture in brief
 
@@ -65,8 +91,9 @@ The firmware compiles cleanly and boots deterministically. Several subsystems ar
 ## Repository layout
 
 ```
-Aura_programs/              Firmware source (84 headers · 75 sources · 1 sketch · ~42K lines)
+Aura_programs/              Firmware source (90 headers · 81 sources · 1 sketch · ~44K lines)
 AURA_ARCHITECTURE.md        Complete architecture analysis (16 sections)
+CHANGELOG.md                Release history
 ```
 
 ## License / attribution

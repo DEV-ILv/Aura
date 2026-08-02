@@ -6,6 +6,7 @@
 #include "logger.h"
 #include "intent_classifier.h"
 #include "offline_response_generator.h"
+#include "local_ai_engine.h"
 
 class TinyAIManager {
 public:

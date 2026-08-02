@@ -305,6 +305,19 @@ enum LogLevel
 #define TINYAI_MAX_RESPONSE_LEN  512
 
 //======================================================
+// LOCAL AI ENGINE V2 (Offline Intelligence Upgrade)
+//======================================================
+
+#define LOCAL_AI_HISTORY_TURNS        6      // Turns of conversation context retained
+#define LOCAL_AI_CACHE_SIZE           8      // Response cache slots (questions+answers)
+#define LOCAL_AI_RETRIEVAL_MEMORIES   3      // Top-N memories injected per turn
+#define LOCAL_AI_RETRIEVAL_GRAPH      2      // Top-N knowledge-graph nodes injected
+#define LOCAL_AI_MAX_FOLLOWUP_LEN     96     // Max length of generated follow-up question
+#define LOCAL_AI_MAX_DATA_ITEMS       5      // Max list items quoted in a response
+#define LOCAL_AI_SELF_TEST_ON_BOOT    true   // Run engine self-test during initialization
+#define LOCAL_AI_VARIATION_POOL       4      // Minimum variants per phrase pool
+
+//======================================================
 // STARTUP GREETING
 //======================================================
 
