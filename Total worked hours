@@ -1,0 +1,154 @@
+# AURA Development Journal
+
+**Project:** AURA – Personal AI Assistant  
+**Author:** Devil  
+**Repository Status:** Active Development  
+**Development Period:** August 2025 – August 2026 *(ongoing)*
+
+---
+
+# Overview
+
+AURA is a modular, voice-controlled personal AI assistant built around the ESP32 platform. The project combines embedded firmware, AI integration, web technologies, mobile development, and hardware prototyping into a single extensible system.
+
+AURA V1 serves as the functional prototype and engineering validation platform for the future AURA V2 hardware.
+
+---
+
+# Development Summary
+
+| Phase | Focus | Estimated Effort |
+|--------|-------|-----------------:|
+| Research & Planning | Architecture, hardware selection, AI evaluation | ~45 h |
+| Hardware Design | Components, wiring, power planning, BOM | ~40 h |
+| Firmware Development | ESP32 firmware, FreeRTOS, managers | ~140 h |
+| AI Integration | Gemini, STT, TTS, conversation pipeline | ~60 h |
+| UI & Dashboard | OLED interface, widgets, animations | ~35 h |
+| Web Portal | Dashboard, chat, OTA, settings | ~45 h |
+| Security & Reliability | Encryption, watchdog, OTA verification | ~45 h |
+| Audio System | SD assets, playback, synthesis | ~30 h |
+| Architecture Refinement | Refactoring, bug fixes, code audits | ~70 h |
+| Documentation | README, BOM, diagrams, changelogs | ~25 h |
+| Flutter Companion App (Phase 1) | Dashboard, chat, REST, WebSocket | ~40 h |
+| **Estimated Total** | | **≈ 575 hours** |
+
+> **Note:** Time estimates are reconstructed from development milestones and major implementation phases. They represent engineering effort rather than a tracked timesheet.
+
+---
+
+# Major Milestones
+
+## Phase 1 – Foundation
+- Defined project goals and roadmap
+- Selected ESP32 as the primary platform
+- Planned modular architecture
+
+## Phase 2 – Firmware
+- Implemented FreeRTOS-based firmware
+- Built 60+ modular managers
+- Added event-driven architecture
+- Implemented memory and context systems
+
+## Phase 3 – AI
+- Integrated Google Gemini
+- Added Speech-to-Text
+- Added Text-to-Speech
+- Built conversational pipeline
+
+## Phase 4 – User Interfaces
+- OLED dashboard
+- Responsive web portal
+- Live monitoring
+- Settings interface
+
+## Phase 5 – Reliability
+- Watchdog improvements
+- AES-256-GCM secure storage
+- OTA verification
+- Diagnostics and health monitoring
+
+## Phase 6 – Audio
+- Procedural sound generation
+- SD-card audio asset support
+- Audio cache
+- Theme-based sound system
+
+## Phase 7 – Mobile Companion
+- Flutter companion app
+- REST API integration
+- WebSocket live updates
+- Dashboard
+- AI chat
+- Settings
+
+---
+
+# Technologies Used
+
+## Languages
+
+- C++
+- Dart
+- HTML
+- CSS
+- JavaScript
+- Python
+
+## Frameworks
+
+- Arduino Framework
+- Flutter
+- FreeRTOS
+
+## AI Services
+
+- Google Gemini
+- Speech-to-Text
+- Text-to-Speech
+
+## Hardware
+
+- ESP32-WROOM-32
+- SSD1306 OLED
+- INMP441 Microphone
+- MAX98357A
+- WS2812 LED Ring
+- microSD Storage
+
+---
+
+# Current Status
+
+### AURA V1
+
+- Firmware functional
+- Breadboard prototype
+- AI integration complete
+- Web portal complete
+- Flutter companion app Phase 1 complete
+
+### AURA V2 (Planned)
+
+- ESP32-P4
+- Custom PCB
+- Capacitive touchscreen
+- Battery-powered operation
+- Custom enclosure
+- Enhanced audio system
+
+---
+
+# Lessons Learned
+
+Throughout the project I gained practical experience in:
+
+- Embedded systems programming
+- Real-time software architecture
+- AI integration
+- REST and WebSocket communication
+- Flutter application development
+- Firmware debugging
+- Hardware prototyping
+- Documentation and version control
+
+AI tools such as ChatGPT, OpenCode, and Gemini were used to accelerate research, generate code, review implementations, and assist with debugging. Final architectural decisions, hardware selection, testing, validation, and integration were performed as part of the project development process.
