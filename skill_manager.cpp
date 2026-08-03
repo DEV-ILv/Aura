@@ -41,8 +41,6 @@ bool extractBool(const String& json, const char* key, bool def) noexcept {
 
 SkillManager::SkillManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_skills.reserve(kMaxSkills);
-    m_executionLog.reserve(kMaxExecutionLog);
 }
 
 SkillManager::~SkillManager() noexcept {

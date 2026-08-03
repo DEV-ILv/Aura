@@ -31,6 +31,7 @@ AURA.upNav = function() {
 };
 
 AURA.refresh = function() {
+  if (!AURA.session || !AURA.session.authenticated) return;
   Promise.all([
     AURA.api.getStatus(),
     AURA.api.getWifi(),
@@ -78,6 +79,17 @@ AURA.initClock = function() {
   setInterval(update, 10000);
 };
 
+// Called after a valid session is established (either fresh login or a token
+// restored from sessionStorage and confirmed by /api/auth/status).
+AURA.startApp = function(mustChange) {
+  AURA.router();
+  AURA.anim.init();
+  AURA.ws.connect();
+  AURA.refresh();
+  AURA.refreshTimer = setInterval(AURA.refresh, 5000);
+  if (mustChange) AURA.auth.openChangePassword(true);
+};
+
 AURA.init = function() {
   if (!location.hash) {
     var m = {
@@ -92,16 +104,23 @@ AURA.init = function() {
       '/logs': 'logs'
     };
     location.hash = m[location.pathname] || 'dashboard';
-  } else {
-    AURA.router();
   }
 
   AURA.initClock();
-  AURA.anim.init();
-  AURA.ws.connect();
+  AURA.session.restore();
 
-  AURA.refresh();
-  AURA.refreshTimer = setInterval(AURA.refresh, 5000);
+  // Verify the (possibly restored) session token against the device.
+  AURA.api.authStatus().then(function(st) {
+    if (st && st.authenticated) {
+      AURA.session.authenticated = true;
+      AURA.session.mustChange = !!st.must_change;
+      AURA.session.expiresIn = st.expiresIn || 0;
+      AURA.startApp(AURA.session.mustChange);
+    } else {
+      AURA.session.authenticated = false;
+      AURA.auth.showLogin();
+    }
+  });
 };
 
 document.addEventListener('DOMContentLoaded', AURA.init);

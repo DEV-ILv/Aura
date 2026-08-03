@@ -77,6 +77,9 @@ AURA.ota.start = function() {
   });
 
   xhr.open('POST', '/ota');
+  if (AURA.session && AURA.session.token) {
+    xhr.setRequestHeader('X-Auth-Token', AURA.session.token);
+  }
   xhr.send(fd);
 };
 

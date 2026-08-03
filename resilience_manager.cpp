@@ -13,9 +13,9 @@ ResilienceManager::ResilienceManager() noexcept
     , m_totalFailures(0)
     , m_totalRecoveries(0)
     , m_lastCleanup(0)
-    , m_initialized(false) {
-    m_records.reserve(kMaxRecords);
-
+    , m_initialized(false)
+    , m_wifiRecoverPending(false)
+    , m_wifiRecoverStarted(0) {
     // Initialize all plans with defaults
     for (int i = 0; i < 12; ++i) {
         m_plans[i] = GetDefaultPlan(static_cast<FailureType>(i));
@@ -35,6 +35,15 @@ bool ResilienceManager::Initialize() noexcept {
 
 void ResilienceManager::Update() noexcept {
     unsigned long now = millis();
+
+    // Finalize asynchronous WiFi recovery without blocking the main loop.
+    if (m_wifiRecoverPending) {
+        if (WiFi.isConnected() || (now - m_wifiRecoverStarted) >= kRecoveryWindowMs) {
+            m_wifiRecoverPending = false;
+            FinalizeWifiRecovery(WiFi.isConnected());
+        }
+    }
+
     if (now - m_lastCleanup >= kCleanupIntervalMs) {
         m_lastCleanup = now;
         PruneRecords();
@@ -101,7 +110,12 @@ bool ResilienceManager::AttemptRecovery(FailureType type) noexcept {
 
     bool recovered = false;
     switch (type) {
-        case FailureType::WIFI_LOSS:    recovered = RecoverWiFi(); break;
+        case FailureType::WIFI_LOSS:
+            // Asynchronous recovery: RecoverWiFi() returns immediately and the
+            // outcome is finalized by Update(). Treat the attempt as in progress
+            // so the retry budget isn't consumed while the window is open.
+            RecoverWiFi();
+            return true;
         case FailureType::SD_FAILURE:   recovered = RecoverSD(); break;
         case FailureType::RENDERER_CRASH: recovered = RecoverRenderer(); break;
         case FailureType::AI_FAILURE:   recovered = RecoverAI(); break;
@@ -127,13 +141,33 @@ bool ResilienceManager::AttemptRecovery(FailureType type) noexcept {
 }
 
 bool ResilienceManager::RecoverWiFi() noexcept {
-    WiFi.reconnect();
-    unsigned long start = millis();
-    while (millis() - start < 10000) {
-        if (WiFi.isConnected()) return true;
-        delay(100);
+    if (m_wifiRecoverPending) {
+        // A recovery window is already in progress; report current state.
+        return WiFi.isConnected();
     }
+    m_wifiRecoverPending = true;
+    m_wifiRecoverStarted = millis();
+    WiFi.reconnect();
+    LOG_INFO(kLogCategory, "WiFi recovery initiated (async, %lums window)",
+             kRecoveryWindowMs);
+    // Non-blocking: the outcome is finalized by Update().
     return WiFi.isConnected();
+}
+
+void ResilienceManager::FinalizeWifiRecovery(bool recovered) noexcept {
+    for (auto& r : m_records) {
+        if (r.type == FailureType::WIFI_LOSS && !r.recovered) {
+            r.recovered = recovered;
+            r.attemptCount++;
+        }
+    }
+    if (recovered) {
+        m_totalRecoveries++;
+        LOG_INFO(kLogCategory, "WiFi recovery successful");
+    } else {
+        LOG_ERROR(kLogCategory, "WiFi recovery failed after %lums window",
+                  kRecoveryWindowMs);
+    }
 }
 
 bool ResilienceManager::RecoverSD() noexcept {

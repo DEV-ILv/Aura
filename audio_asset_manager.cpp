@@ -162,7 +162,7 @@ bool AudioAssetManager::streamPlayback(const std::vector<int16_t>& pcmData) {
         }
         offset += written;
         remainingBytes -= written;
-        esp_task_wdt_reset();
+        if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
         if (written == 0) {
             vTaskDelay(1);
         }

@@ -2,6 +2,7 @@
 #define AURA_SYSTEM_MANAGER_H
 
 #include <Arduino.h>
+#include "service_status_manager.h"
 
 /**
  * @enum SystemState
@@ -125,6 +126,18 @@ public:
     [[nodiscard]] bool isSafeMode() const noexcept;
 
     /**
+     * @brief Check if running in headless development mode
+     * @return true if headless mode is active
+     */
+    [[nodiscard]] bool isHeadless() const noexcept;
+
+    /**
+     * @brief Get how headless mode was activated
+     * @return HeadlessMode value
+     */
+    [[nodiscard]] HeadlessMode getHeadlessMode() const noexcept;
+
+    /**
      * @brief Factory reset (erase all settings)
      */
     void factoryReset() noexcept;
@@ -187,6 +200,9 @@ private:
     void setError(SystemError error) noexcept;
     bool initializeModules() noexcept;
     void updateModules() noexcept;
+    void syncServiceStatuses() noexcept;
+    void refreshDynamicServiceStatus() noexcept;
+    void printBootBanner() noexcept;
     void monitorMemory() noexcept;
     void monitorTasks() noexcept;
     void monitorWiFi() noexcept;
@@ -206,6 +222,8 @@ private:
     unsigned long m_moduleInitStartTime;
     uint8_t m_initModuleIndex;
     bool m_safeMode;
+    bool m_headless;
+    HeadlessMode m_headlessMode;
 };
 
 /**

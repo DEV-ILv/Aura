@@ -6,7 +6,6 @@ DocumentManager documentManager;
 
 DocumentManager::DocumentManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_documents.reserve(kMaxDocs);
 }
 
 DocumentManager::~DocumentManager() noexcept {

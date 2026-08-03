@@ -3,6 +3,8 @@
 #include <Update.h>
 #include <functional>
 #include <ArduinoJson.h>
+#include <mbedtls/pk.h>
+#include "service_status_manager.h"
 #include "storage_manager.h"
 #include "audio_manager.h"
 #include "conversation_manager.h"
@@ -11,6 +13,8 @@
 #include "skill_manager.h"
 #include "personality_manager.h"
 #include "context_manager.h"
+#include "security_manager.h"
+#include "firmware_keys.h"
 
 #include "performance_manager.h"
 #include "crash_manager.h"
@@ -76,8 +80,13 @@ WebPortal::WebPortal() noexcept
       m_lastClientActivity(0),
       m_requestCounter(0),
       m_lastWsPublish(0),
-      m_lastWsPing(0)
+      m_lastWsPing(0),
+      m_otaHashing(false)
 {
+    for (size_t i = 0; i < WS_MAX_CLIENTS; ++i) {
+        m_wsAuth[i] = false;
+    }
+    mbedtls_sha256_init(&m_otaSha256);
 }
 
 WebPortal::~WebPortal() noexcept
@@ -124,6 +133,39 @@ bool WebPortal::start() noexcept
     m_server.begin();
     m_webSocket.begin();
     m_webSocket.onEvent(std::bind(&WebPortal::handleWebSocketEvent, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+
+    // Reject cross-origin WebSocket handshakes (CSRF protection). Browser
+    // clients must send an Origin that matches this device's own address
+    // (LAN IP, AP IP, or configured hostname). Non-browser clients that omit
+    // Origin are still required to pass the token-based auth message before
+    // any telemetry is sent (see handleWebSocketAuthMessage).
+    static const char* noMandatoryHeaders[] = { nullptr };
+    m_webSocket.onValidateHttpHeader(
+        [this](String headerName, String headerValue) -> bool {
+            if (headerName.equalsIgnoreCase("origin")) {
+                String hostPart = headerValue;
+                int scheme = hostPart.indexOf("://");
+                if (scheme >= 0) hostPart = hostPart.substring(scheme + 3);
+                int portPos = hostPart.indexOf(':');
+                if (portPos >= 0) hostPart = hostPart.substring(0, portPos);
+
+                String hostname = WiFi.getHostname();
+                bool originOk =
+                    (hostPart == WiFi.localIP().toString()) ||
+                    (hostPart == WiFi.softAPIP().toString()) ||
+                    (hostPart == hostname) ||
+                    (hostPart == hostname + ".local");
+
+                if (!originOk) {
+                    Logger::warning("WebPortal", "WebSocket rejected: cross-origin handshake (origin=%s)",
+                        headerValue.c_str());
+                    return false;
+                }
+            }
+            return true;
+        },
+        noMandatoryHeaders, 0);
+
     m_running = true;
     m_lastClientActivity = millis();
 
@@ -169,6 +211,9 @@ void WebPortal::update() noexcept
         m_lastWsPublish = now;
         webSocketBroadcastDashboard();
     }
+
+    // Broadcast module status changes (headless detection, online/offline)
+    webSocketBroadcastModuleStatus();
 
     // Periodic WebSocket ping to keep alive
     if (now - m_lastWsPing >= WS_PING_INTERVAL_MS) {
@@ -396,6 +441,7 @@ bool WebPortal::registerApiRoutes() noexcept
     m_server.on("/api/auth/login", HTTP_POST, [this]() { handleApiAuthLogin(); });
     m_server.on("/api/auth/logout", HTTP_POST, [this]() { handleApiAuthLogout(); });
     m_server.on("/api/auth/status", HTTP_GET, [this]() { handleApiAuthStatus(); });
+    m_server.on("/api/auth/change-password", HTTP_POST, [this]() { handleApiAuthChangePassword(); });
 
     // Startup greeting routes
     m_server.on("/api/startup/settings", HTTP_GET, [this]() { handleApiStartupSettings(); });
@@ -630,6 +676,8 @@ void WebPortal::handleSaveWifi() noexcept
     String ssid = m_server.arg("ssid");
     String password = m_server.arg("password");
 
+    // Persist to NVS so the device reconnects after reboot, then connect.
+    wifiManager.saveCredentials(ssid.c_str(), password.c_str());
     wifiManager.connect(ssid.c_str(), password.c_str());
     sendSuccess("Wi-Fi configuration saved. Device will reconnect...");
 }
@@ -685,11 +733,14 @@ void WebPortal::handleOTA() noexcept
         {
             Logger::info("WebPortal", "OTA upload started");
             m_otaInProgress = true;
+            m_otaHashing = true;
+            mbedtls_sha256_starts(&m_otaSha256, 0);
 
             if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
             {
                 Logger::error("WebPortal", "OTA update begin failed");
                 m_otaInProgress = false;
+                m_otaHashing = false;
                 sendError("OTA update initialization failed", 500);
                 return;
             }
@@ -698,18 +749,48 @@ void WebPortal::handleOTA() noexcept
         {
             if (m_otaInProgress)
             {
+                if (m_otaHashing) {
+                    mbedtls_sha256_update(&m_otaSha256, upload.buf, upload.currentSize);
+                }
                 if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
                 {
                     Logger::error("WebPortal", "OTA update write failed");
                     Update.abort();
                     m_otaInProgress = false;
+                    m_otaHashing = false;
                     sendError("OTA write failed", 500);
                 }
             }
         }
         else if (upload.status == UPLOAD_FILE_END)
         {
-            if (m_otaInProgress && Update.end(true))
+            bool signatureOk = true;
+            if (m_otaInProgress && m_otaHashing) {
+                uint8_t hash[32];
+                mbedtls_sha256_finish(&m_otaSha256, hash);
+                m_otaHashing = false;
+                const String sig = m_server.hasHeader("X-Signature")
+                    ? m_server.header("X-Signature")
+                    : (m_server.hasArg("signature") ? m_server.arg("signature") : "");
+                if (!sig.isEmpty()) {
+                    signatureOk = verifyWebOtaSignature(hash, sig);
+                    if (!signatureOk) {
+                        Logger::error("WebPortal", "Web OTA signature INVALID — aborting");
+                        Update.abort();
+                        m_otaInProgress = false;
+                        securityManager.LogAudit(AuditEventType::OTA_STARTED, "webportal",
+                                                 "Web OTA rejected: bad signature", false);
+                        sendError("Firmware signature verification failed", 400);
+                        return;
+                    }
+                } else {
+                    Logger::warning("WebPortal",
+                        "Web OTA uploaded WITHOUT a signature. Only signed firmware should "
+                        "be installed in production (see OTA docs).");
+                }
+            }
+
+            if (m_otaInProgress && signatureOk && Update.end(true))
             {
                 Logger::info("WebPortal", "OTA update completed successfully");
                 m_otaInProgress = false;
@@ -729,9 +810,51 @@ void WebPortal::handleOTA() noexcept
             Logger::warning("WebPortal", "OTA update aborted");
             Update.abort();
             m_otaInProgress = false;
+            m_otaHashing = false;
             sendError("OTA upload aborted", 400);
         }
     }
+}
+
+bool WebPortal::verifyWebOtaSignature(const uint8_t hash[32], const String& sigHex) noexcept {
+    // Fail closed if no key is embedded.
+    if (kFirmwareSigningKeyLen == 0) {
+        Logger::error("WebPortal", "No firmware signing key embedded");
+        return false;
+    }
+
+    size_t hexLen = sigHex.length();
+    if (hexLen == 0 || (hexLen % 2) != 0) return false;
+    size_t sigLen = hexLen / 2;
+    uint8_t* sigBuf = new (std::nothrow) uint8_t[sigLen];
+    if (!sigBuf) return false;
+    for (size_t i = 0; i < sigLen; ++i) {
+        char hi = sigHex[i * 2];
+        char lo = sigHex[i * 2 + 1];
+        uint8_t b = 0;
+        if (hi >= '0' && hi <= '9') b = (hi - '0') << 4;
+        else if (hi >= 'a' && hi <= 'f') b = (hi - 'a' + 10) << 4;
+        else if (hi >= 'A' && hi <= 'F') b = (hi - 'A' + 10) << 4;
+        else { delete[] sigBuf; return false; }
+        if (lo >= '0' && lo <= '9') b |= (lo - '0');
+        else if (lo >= 'a' && lo <= 'f') b |= (lo - 'a' + 10);
+        else if (lo >= 'A' && lo <= 'F') b |= (lo - 'A' + 10);
+        else { delete[] sigBuf; return false; }
+        sigBuf[i] = b;
+    }
+
+    mbedtls_pk_context pk;
+    mbedtls_pk_init(&pk);
+    int ret = mbedtls_pk_parse_public_key(&pk, kFirmwareSigningKey, kFirmwareSigningKeyLen);
+    if (ret != 0) {
+        delete[] sigBuf;
+        mbedtls_pk_free(&pk);
+        return false;
+    }
+    ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, hash, 32, sigBuf, sigLen);
+    delete[] sigBuf;
+    mbedtls_pk_free(&pk);
+    return ret == 0;
 }
 
 void WebPortal::handleNotFound() noexcept
@@ -767,18 +890,19 @@ void WebPortal::handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payloa
     switch (type) {
         case WStype_DISCONNECTED:
             Logger::info("WebPortal", "WS[%u] disconnected", num);
+            m_wsAuth[num] = false;
             if (eventBus.isInitialized()) {
                 eventBus.publish(EventType::WS_CLIENT_DISCONNECTED, "WebPortal");
             }
             break;
 
         case WStype_CONNECTED:
-            Logger::info("WebPortal", "WS[%u] connected", num);
-            if (eventBus.isInitialized()) {
-                eventBus.publish(EventType::WS_CLIENT_CONNECTED, "WebPortal");
-            }
-            // Send initial dashboard snapshot on connect
-            webSocketBroadcastDashboard();
+            Logger::info("WebPortal", "WS[%u] connected (awaiting auth)", num);
+            m_wsAuth[num] = false;
+            // No telemetry is sent until the client authenticates with a valid
+            // session token (see handleWebSocketAuthMessage). Sending telemetry
+            // here would leak device state to any unauthenticated client.
+            m_webSocket.sendTXT(num, "{\"type\":\"auth_required\"}");
             break;
 
         case WStype_TEXT:
@@ -786,7 +910,12 @@ void WebPortal::handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payloa
             String msg = String(reinterpret_cast<char*>(payload));
             if (msg == "ping") {
                 m_webSocket.sendTXT(num, "pong");
+                break;
             }
+            if (msg == "pong") {
+                break;
+            }
+            handleWebSocketAuthMessage(num, msg);
             break;
         }
 
@@ -795,9 +924,63 @@ void WebPortal::handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payloa
     }
 }
 
-void WebPortal::webSocketBroadcast(String json) noexcept {
+void WebPortal::handleWebSocketAuthMessage(uint8_t num, const String& msg) noexcept {
+    if (m_wsAuth[num]) return;
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, msg);
+    if (err) {
+        m_webSocket.sendTXT(num, "{\"type\":\"error\",\"message\":\"invalid handshake\"}");
+        m_webSocket.disconnect(num);
+        return;
+    }
+
+    String type = doc["type"] | "";
+    if (type != "auth") {
+        m_webSocket.sendTXT(num, "{\"type\":\"error\",\"message\":\"auth required\"}");
+        m_webSocket.disconnect(num);
+        return;
+    }
+
+    String token = doc["token"] | "";
+
+    // Reject empty/expired/mismatched tokens; close the connection immediately.
+    // The token must be the active session token validated by SecurityManager.
+    bool valid = !token.isEmpty()
+        && !m_sessionToken.isEmpty()
+        && m_sessionCreated != 0
+        && (millis() - m_sessionCreated) < kSessionTimeoutMs
+        && securityManager.CheckToken(token);
+
+    if (!valid) {
+        Logger::warning("WebPortal", "WS[%u] rejected: invalid session token", num);
+        securityManager.LogAudit(AuditEventType::UNAUTHORIZED_ACCESS, "websocket",
+                                 "WebSocket auth rejected", false);
+        m_webSocket.sendTXT(num, "{\"type\":\"error\",\"message\":\"unauthorized\"}");
+        m_webSocket.disconnect(num);
+        return;
+    }
+
+    m_wsAuth[num] = true;
+    Logger::info("WebPortal", "WS[%u] authenticated", num);
+
+    // Send the current dashboard + module status snapshot on successful auth
+    webSocketBroadcastDashboard();
+    serviceStatusManager.markAllChanged();
+    webSocketBroadcastModuleStatus();
+}
+
+void WebPortal::sendToAuthenticatedClients(String json) noexcept {
     if (!m_running) return;
-    m_webSocket.broadcastTXT(json);
+    for (size_t i = 0; i < WS_MAX_CLIENTS; ++i) {
+        if (m_wsAuth[i] && m_webSocket.clientIsConnected(static_cast<uint8_t>(i))) {
+            m_webSocket.sendTXT(static_cast<uint8_t>(i), json);
+        }
+    }
+}
+
+void WebPortal::webSocketBroadcast(String json) noexcept {
+    sendToAuthenticatedClients(json);
 }
 
 void WebPortal::webSocketBroadcastDashboard() noexcept {
@@ -839,6 +1022,14 @@ void WebPortal::webSocketBroadcastDashboard() noexcept {
     json += "}";
 
     json += "}";
+    webSocketBroadcast(json);
+}
+
+void WebPortal::webSocketBroadcastModuleStatus() noexcept {
+    if (!m_running || m_webSocket.connectedClients() == 0) return;
+    if (!serviceStatusManager.hasPendingChanges()) return;
+
+    String json = serviceStatusManager.takePendingChangesJson();
     webSocketBroadcast(json);
 }
 
@@ -1760,16 +1951,11 @@ void WebPortal::handleApiFunctionExecute() noexcept
 void WebPortal::handleApiStatus() noexcept
 {
     m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
 
-    char json[MAX_JSON_BUFFER];
-    snprintf(json, sizeof(json),
-        R"({"running":%s,"uptime":%lu,"heap_free":%u,"wifi_connected":%s,"requests":%u})",
-        m_running ? "true" : "false",
-        millis() / 1000,
-        ESP.getFreeHeap(),
-        WiFi.status() == WL_CONNECTED ? "true" : "false",
-        m_requestCounter
-    );
+    // Full status payload from ServiceStatusManager (keeps legacy keys
+    // running/uptime/heap_free/wifi_connected/requests for compatibility).
+    String json = serviceStatusManager.getStatusJson(m_requestCounter);
 
     sendJson(json);
 }
@@ -1805,8 +1991,27 @@ void WebPortal::handleApiWifi() noexcept
             return;
         }
 
-        Logger::info("WebPortal", "Wi-Fi API update request received");
-        sendSuccess("Wi-Fi configuration received");
+        String body = m_server.arg("plain");
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, body);
+        if (err) {
+            sendError("Invalid JSON", 400);
+            return;
+        }
+
+        String ssid = doc["ssid"] | "";
+        String password = doc["password"] | "";
+        if (ssid.isEmpty()) {
+            sendError("Missing SSID", 400);
+            return;
+        }
+
+        // Persist to NVS so the device reconnects automatically after reboot,
+        // then initiate the connection (connect() also persists).
+        wifiManager.saveCredentials(ssid.c_str(), password.c_str());
+        wifiManager.connect(ssid.c_str(), password.c_str());
+        Logger::info("WebPortal", "Wi-Fi credentials saved via API");
+        sendSuccess("Wi-Fi credentials saved. Device will reconnect...");
     }
 }
 
@@ -1872,6 +2077,7 @@ bool WebPortal::isAuthenticated() noexcept {
     if (millis() - m_sessionCreated >= kSessionTimeoutMs) {
         m_sessionToken.clear();
         m_sessionCreated = 0;
+        for (size_t i = 0; i < WS_MAX_CLIENTS; ++i) m_wsAuth[i] = false;
         return false;
     }
     if (!m_server.hasHeader("X-Auth-Token")) {
@@ -1908,23 +2114,72 @@ String WebPortal::generateSessionToken() noexcept {
     return token;
 }
 
+bool WebPortal::secureEquals(const String& a, const String& b) noexcept {
+    if (a.length() != b.length()) return false;
+    uint8_t diff = 0;
+    for (size_t i = 0; i < a.length(); ++i) {
+        diff |= static_cast<uint8_t>(a[i]) ^ static_cast<uint8_t>(b[i]);
+    }
+    return diff == 0;
+}
+
+String WebPortal::generateRandomPassword() noexcept {
+    String pwd;
+    pwd.reserve(16);
+    for (int i = 0; i < 16; ++i) {
+        uint8_t r = static_cast<uint8_t>(esp_random());
+        pwd += "0123456789abcdef"[r & 0x0F];
+        pwd += "0123456789abcdef"[(r >> 4) & 0x0F];
+    }
+    return pwd;
+}
+
 bool WebPortal::loadAuthCredentials() noexcept {
     m_authPrefs.begin(kAuthNamespace, true);
+    uint32_t storedVersion = m_authPrefs.getUInt("version", 0);
     m_authUsername = m_authPrefs.getString("username", kDefaultUsername);
-    m_authPassword = m_authPrefs.getString("password", kDefaultPassword);
+    m_authPassword = m_authPrefs.getString("password", "");
+    m_authMustChange = m_authPrefs.getBool("must_change", false);
     m_authPrefs.end();
 
-    // Generate unique default credentials from MAC if none are configured
-    if (m_authPassword.isEmpty()) {
-        uint8_t mac[6];
-        WiFi.macAddress(mac);
-        char buf[32];
-        snprintf(buf, sizeof(buf), "aura-%02x%02x%02x%02x%02x%02x",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        m_authPassword = String(buf);
+    // FIRST BOOT: there is no configured password and no prior credential
+    // record. Generate a strong random admin password, persist it in NVS, and
+    // print it to the Serial monitor. There is NO known default password.
+    if (m_authPassword.isEmpty() && storedVersion == 0) {
+        m_authPassword = generateRandomPassword();
+        m_authMustChange = true;
         saveAuthCredentials(m_authUsername, m_authPassword);
-        Logger::info("WebPortal", "Generated unique credentials from MAC");
+
+        Serial.println();
+        Serial.println("======================================================");
+        Serial.println("  AURA FIRST-BOOT ADMIN CREDENTIALS");
+        Serial.print("    Username: "); Serial.println(m_authUsername);
+        Serial.print("    Password: "); Serial.println(m_authPassword);
+        Serial.println("  Change it after first login (Web Portal > Settings).");
+        Serial.println("======================================================");
+        Serial.println();
+        Logger::warning("WebPortal", "Generated first-boot admin credentials (see Serial)");
+        return true;
     }
+
+    // Version migration: NEVER reset user credentials to defaults. Only persist
+    // the stored credentials again under the new layout (e.g. adding the
+    // must_change flag), so the user-chosen password is preserved.
+    if (storedVersion != kAuthCredVersion) {
+        Logger::info("WebPortal", "Auth NVS layout migrated (v%u -> v%u)",
+            static_cast<unsigned>(storedVersion), static_cast<unsigned>(kAuthCredVersion));
+        saveAuthCredentials(m_authUsername, m_authPassword);
+    }
+
+    // Safety net for exotic states: never boot with an empty password.
+    if (m_authPassword.isEmpty()) {
+        m_authPassword = generateRandomPassword();
+        m_authMustChange = true;
+        saveAuthCredentials(m_authUsername, m_authPassword);
+        Logger::warning("WebPortal", "Regenerated empty admin password (see Serial)");
+        Serial.print("AURA admin password: "); Serial.println(m_authPassword);
+    }
+
     return true;
 }
 
@@ -1933,6 +2188,8 @@ bool WebPortal::saveAuthCredentials(const String& username, const String& passwo
     bool ok = true;
     ok = ok && m_authPrefs.putString("username", username);
     ok = ok && m_authPrefs.putString("password", password);
+    ok = ok && m_authPrefs.putUInt("version", kAuthCredVersion);
+    ok = ok && m_authPrefs.putBool("must_change", m_authMustChange);
     m_authPrefs.end();
     if (ok) {
         m_authUsername = username;
@@ -1941,14 +2198,49 @@ bool WebPortal::saveAuthCredentials(const String& username, const String& passwo
     return ok;
 }
 
+void WebPortal::resetLoginTracker(const String& ip) noexcept {
+    m_loginTrackers.erase(ip);
+}
+
+bool WebPortal::isLoginLockedOut(const String& ip) noexcept {
+    auto it = m_loginTrackers.find(ip);
+    if (it == m_loginTrackers.end()) return false;
+    return millis() < it->second.lockoutUntil;
+}
+
+void WebPortal::recordFailedLogin(const String& ip) noexcept {
+    LoginTracker& tracker = m_loginTrackers[ip];
+    tracker.attempts++;
+    if (tracker.attempts >= kMaxLoginAttempts) {
+        tracker.lockoutUntil = millis() + kLoginLockoutDurationMs;
+        tracker.attempts = 0;
+        Logger::warning("WebPortal", "Login locked out for %lu ms from %s",
+            kLoginLockoutDurationMs, ip.c_str());
+    }
+
+    // Bound memory usage: drop stale trackers once the map grows too large.
+    if (m_loginTrackers.size() > kMaxTrackedIps) {
+        for (auto it = m_loginTrackers.begin(); it != m_loginTrackers.end();) {
+            if (it->second.lockoutUntil == 0 || millis() > it->second.lockoutUntil) {
+                it = m_loginTrackers.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
+
 void WebPortal::handleApiAuthLogin() noexcept {
     m_requestCounter++;
 
-    // Rate limiting check
-    if (m_loginLockoutUntil > 0 && millis() < m_loginLockoutUntil) {
-        unsigned long remaining = (m_loginLockoutUntil - millis()) / 1000UL;
+    String clientIp = m_server.client().remoteIP().toString();
+
+    // Per-IP rate limiting check (prevents a single attacker locking out every
+    // other client and bounds brute-force attempts per source address).
+    if (isLoginLockedOut(clientIp)) {
+        unsigned long remaining = (m_loginTrackers[clientIp].lockoutUntil - millis()) / 1000UL;
         Logger::warning("WebPortal", "Login locked out for %lu more seconds from %s",
-            remaining, m_server.client().remoteIP().toString().c_str());
+            remaining, clientIp.c_str());
         sendError("Too many attempts. Try again later.", 429);
         return;
     }
@@ -1974,37 +2266,33 @@ void WebPortal::handleApiAuthLogin() noexcept {
         return;
     }
 
-    if (username != m_authUsername || password != m_authPassword) {
-        m_loginAttempts++;
-        Logger::warning("WebPortal", "Failed login attempt %u/%u from %s",
-            m_loginAttempts, kMaxLoginAttempts, m_server.client().remoteIP().toString().c_str());
-        if (m_loginAttempts >= kMaxLoginAttempts) {
-            m_loginLockoutUntil = millis() + kLoginLockoutDurationMs;
-            m_loginAttempts = 0;
-            Logger::warning("WebPortal", "Login locked out for %lu ms from %s",
-                kLoginLockoutDurationMs, m_server.client().remoteIP().toString().c_str());
-        }
+    if (username != m_authUsername || !secureEquals(password, m_authPassword)) {
+        recordFailedLogin(clientIp);
+        Logger::warning("WebPortal", "Failed login attempt from %s", clientIp.c_str());
+        securityManager.LogAudit(AuditEventType::LOGIN, clientIp,
+                                 "Login failed", false);
         sendError("Invalid credentials", 401);
         return;
     }
 
-    // Successful login — reset rate limiter
-    m_loginAttempts = 0;
-    m_loginLockoutUntil = 0;
+    // Successful login — reset per-IP rate limiter
+    resetLoginTracker(clientIp);
 
     m_sessionToken = generateSessionToken();
     m_sessionCreated = millis();
+    securityManager.Authenticate(m_sessionToken);
 
     String json;
-    json.reserve(128);
+    json.reserve(192);
     json += "{\"success\":true,\"token\":\"";
     json += m_sessionToken;
     json += "\",\"expiresIn\":" + String(kSessionTimeoutMs / 1000UL);
+    json += ",\"must_change\":" + String(m_authMustChange ? "true" : "false");
     json += "}";
     sendJson(json, 200);
 
     Logger::info("WebPortal", "User logged in from %s, session token generated",
-        m_server.client().remoteIP().toString().c_str());
+        clientIp.c_str());
 }
 
 void WebPortal::handleApiAuthLogout() noexcept {
@@ -2012,6 +2300,8 @@ void WebPortal::handleApiAuthLogout() noexcept {
     if (!isAuthenticatedOrReject()) return;
     m_sessionToken.clear();
     m_sessionCreated = 0;
+    for (size_t i = 0; i < WS_MAX_CLIENTS; ++i) m_wsAuth[i] = false;
+    securityManager.Deauthenticate();
     sendSuccess("Logged out");
     Logger::info("WebPortal", "User logged out");
 }
@@ -2020,15 +2310,56 @@ void WebPortal::handleApiAuthStatus() noexcept {
     m_requestCounter++;
     bool authenticated = isAuthenticated();
     String json;
-    json.reserve(128);
+    json.reserve(192);
     json += "{\"authenticated\":" + String(authenticated ? "true" : "false");
     json += ",\"hasSession\":" + String(!m_sessionToken.isEmpty() ? "true" : "false");
+    json += ",\"must_change\":" + String(m_authMustChange ? "true" : "false");
     if (authenticated) {
         unsigned long remaining = (kSessionTimeoutMs - (millis() - m_sessionCreated)) / 1000UL;
         json += ",\"expiresIn\":" + String(remaining);
     }
     json += "}";
     sendJson(json, 200);
+}
+
+void WebPortal::handleApiAuthChangePassword() noexcept {
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    if (!m_server.hasArg("plain")) {
+        sendError("No JSON body", 400);
+        return;
+    }
+
+    String body = m_server.arg("plain");
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, body);
+    if (err) {
+        sendError("Invalid JSON", 400);
+        return;
+    }
+
+    String currentPassword = doc["current_password"] | "";
+    String newPassword = doc["new_password"] | "";
+
+    if (!secureEquals(currentPassword, m_authPassword)) {
+        securityManager.LogAudit(AuditEventType::PERMISSION_CHANGE, "webportal",
+                                 "Password change rejected (wrong current password)", false);
+        sendError("Current password is incorrect", 401);
+        return;
+    }
+
+    if (newPassword.length() < 8) {
+        sendError("New password must be at least 8 characters", 400);
+        return;
+    }
+
+    m_authMustChange = false;
+    saveAuthCredentials(m_authUsername, newPassword);
+    securityManager.LogAudit(AuditEventType::PERMISSION_CHANGE, "webportal",
+                             "Admin password changed", true);
+    sendSuccess("Password updated");
+    Logger::info("WebPortal", "Admin password changed");
 }
 
 // ============================================================================
@@ -3211,6 +3542,17 @@ static void factoryResetTask(void* pvParameters)
     vTaskDelay(pdMS_TO_TICKS(FACTORY_RESET_DELAY_MS));
     wifiManager.clearCredentials();
     Logger::info("WebPortal", "Wi-Fi credentials cleared");
+
+    // Clear web-portal admin credentials so the next boot generates a fresh
+    // random admin password (printed to Serial). Never reuse old credentials.
+    {
+        Preferences authPrefs;
+        authPrefs.begin("auraauth", false);
+        authPrefs.clear();
+        authPrefs.end();
+        Logger::info("WebPortal", "Admin credentials cleared");
+    }
+
     vTaskDelay(pdMS_TO_TICKS(500));
     ESP.restart();
     vTaskDelete(nullptr);

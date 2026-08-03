@@ -12,7 +12,6 @@ CommandPalette commandPalette;
 CommandPalette::CommandPalette() noexcept
     : Service(kStaticName, BootPriority::NORMAL)
     , m_initialized(false) {
-    m_commands.reserve(kMaxCommands);
 }
 
 CommandPalette::~CommandPalette() noexcept = default;

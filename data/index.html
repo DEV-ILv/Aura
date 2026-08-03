@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="/css/memory.css">
 <link rel="stylesheet" href="/css/reminders.css">
 <link rel="stylesheet" href="/css/logs.css">
+<link rel="stylesheet" href="/css/auth.css">
 <link rel="stylesheet" href="/css/responsive.css">
 </head>
 <body>
@@ -34,6 +35,7 @@
 <div class="nav-right">
 <span class="ver" id="top-ver"></span>
 <span class="tm" id="top-tm">--:--</span>
+<button class="logout-btn material-symbols-outlined" id="logout-btn" onclick="AURA.auth.logout()" title="Sign out" aria-label="Sign out">logout</button>
 </div>
 </nav>
 <div class="body-wrap">
@@ -52,12 +54,32 @@
 <main id="content"></main>
 </div>
 </div>
+<div id="auth-root" aria-modal="true"></div>
+
+<div class="modal-overlay" id="pwd-modal" aria-modal="true">
+<div class="modal">
+<div class="modal-h">Change Admin Password</div>
+<div class="auth-sub" id="pwd-msg"></div>
+<form id="pwd-form" onsubmit="AURA.auth.submitChangePassword(event)">
+<div class="frm-grp"><label for="pwd-current">Current Password</label><input type="password" id="pwd-current" autocomplete="current-password" required></div>
+<div class="frm-grp"><label for="pwd-new">New Password (min 8 characters)</label><input type="password" id="pwd-new" autocomplete="new-password" required></div>
+<div class="frm-grp"><label for="pwd-confirm">Confirm New Password</label><input type="password" id="pwd-confirm" autocomplete="new-password" required></div>
+<div class="auth-err" id="pwd-err"></div>
+<div class="btn-group">
+<button type="submit" class="btn btn-primary btn-sm">Update Password</button>
+<button type="button" class="btn btn-ghost btn-sm" onclick="AURA.auth.closeChangePassword()">Cancel</button>
+</div>
+</form>
+</div>
+</div>
+
 <div class="toast" id="toast"></div>
 <script src="/js/utils.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/websocket.js"></script>
 <script src="/js/animations.js"></script>
 <script src="/js/components.js"></script>
+<script src="/js/auth.js"></script>
 <script src="/js/dashboard.js"></script>
 <script src="/js/chat.js"></script>
 <script src="/js/memory.js"></script>

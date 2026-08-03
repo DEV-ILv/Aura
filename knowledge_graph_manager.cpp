@@ -48,8 +48,6 @@ bool extractBool(const String& json, const char* key, bool def) noexcept {
 
 KnowledgeGraphManager::KnowledgeGraphManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_nodes.reserve(kMaxNodes);
-    m_edges.reserve(kMaxEdges);
 }
 
 KnowledgeGraphManager::~KnowledgeGraphManager() noexcept {

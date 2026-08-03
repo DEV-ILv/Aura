@@ -11,7 +11,6 @@ DiagnosticSystem::DiagnosticSystem() noexcept
     : Service(kStaticName, BootPriority::PRIORITY_LOW)
     , m_lastSampleTime(0)
     , m_initialized(false) {
-    m_history.reserve(kMaxHistory);
 }
 
 DiagnosticSystem::~DiagnosticSystem() noexcept = default;

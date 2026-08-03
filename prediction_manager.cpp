@@ -12,7 +12,6 @@ PredictionManager predictionManager;
 
 PredictionManager::PredictionManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0), m_lastRunTime(0) {
-    m_predictions.reserve(kMaxHistory);
 }
 
 PredictionManager::~PredictionManager() noexcept {

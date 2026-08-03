@@ -13,7 +13,6 @@ ContextManager::ContextManager() noexcept
     : m_initialized(false), m_lastRefresh(0)
     , m_assistantContext(AssistantContext::GENERAL), m_contextSwitchTime(0)
     , m_contextSwitchCount(0), m_lastContextSwitchDate(0) {
-    m_history.reserve(kMaxHistory);
 }
 
 ContextManager::~ContextManager() noexcept {}

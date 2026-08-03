@@ -4,7 +4,6 @@
 GoalManager goalManager;
 
 GoalManager::GoalManager() noexcept : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_goals.reserve(kMaxGoals);
 }
 
 GoalManager::~GoalManager() noexcept { if (m_dirty) save(); }

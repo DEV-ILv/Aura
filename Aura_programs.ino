@@ -31,6 +31,10 @@ static constexpr uint32_t kSerialBaudRate = 115200;
 static constexpr uint32_t kSerialTimeoutMs = 500;
 static constexpr uint32_t kWatchdogTimeoutMs = 30000;
 
+// Tracks whether the loop task is actually registered with the task WDT.
+// esp_task_wdt_reset() is only safe to call when this is true.
+static bool g_watchdogArmed = false;
+
 // ====================================================
 // ARDUINO ENTRY POINTS
 // ====================================================
@@ -64,8 +68,10 @@ void setup() {
 }
 
 void loop() {
-    // Feed watchdog
-    esp_task_wdt_reset();
+    // Feed watchdog (only if the current task is actually registered)
+    if (g_watchdogArmed) {
+        esp_task_wdt_reset();
+    }
 
     // Run system state machine (updates all modules)
     systemManager.run();
@@ -131,13 +137,23 @@ void initializeWatchdog() {
         .trigger_panic = true
     };
     esp_err_t err = esp_task_wdt_init(&wdt_config);
-    if (err == ESP_OK) {
-        err = esp_task_wdt_add(nullptr);  // Add current task (loop task)
+    if (err == ESP_ERR_INVALID_STATE) {
+        // TWDT is already initialized (e.g. by the Arduino core / WiFi stack).
+        // Adopt the existing watchdog instead of treating this as a failure.
+        Logger::info("SYSTEM", "Watchdog already initialized, adopting");
+        err = ESP_OK;
     }
-    if (err != ESP_OK) {
-        Logger::warning("SYSTEM", "Watchdog init failed: %d", err);
-    } else {
+    if (err == ESP_OK) {
+        // Register the current (loop) task with the task WDT. Ignore the
+        // direct return value; esp_task_wdt_status() below is authoritative.
+        esp_task_wdt_add(nullptr);
+    }
+    if (esp_task_wdt_status(nullptr) == ESP_OK) {
+        g_watchdogArmed = true;
         Logger::info("SYSTEM", "Watchdog enabled (%lu ms)", kWatchdogTimeoutMs);
+    } else {
+        g_watchdogArmed = false;
+        Logger::warning("SYSTEM", "Watchdog not armed (loop task unregistered)");
     }
 }
 

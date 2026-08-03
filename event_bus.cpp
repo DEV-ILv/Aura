@@ -4,8 +4,6 @@ EventBus eventBus;
 
 EventBus::EventBus() noexcept
     : m_initialized(false), m_lastPublishTime(0), m_lastIdCounter(0) {
-    m_pending.reserve(kMaxPendingEvents);
-    m_handlers.reserve(kMaxHandlers);
 }
 
 EventBus::~EventBus() noexcept {

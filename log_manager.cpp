@@ -8,7 +8,6 @@ LogManager::LogManager() noexcept
     : Service(kStaticName, BootPriority::PRIORITY_LOW)
     , m_initialized(false)
     , m_logFileSize(0) {
-    m_buffer.reserve(kMaxBufferedEntries);
     // Default: Serial enabled at DEBUG level
     m_outputs[0].enabled = true;   // SERIAL_PORT
     m_outputs[0].minLevel = LogLevelEx::DEBUG;

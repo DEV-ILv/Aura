@@ -53,6 +53,7 @@ public:
 
     // Authentication
     bool Authenticate(const String& token) noexcept;
+    bool CheckToken(const String& token) const noexcept;
     void Deauthenticate() noexcept;
     bool IsAuthenticated() const noexcept;
     Permission GetCurrentPermission() const noexcept;
@@ -113,6 +114,7 @@ private:
     bool m_authenticated;
     Permission m_currentPermission;
     bool m_initialized;
+    String m_expectedToken;
 };
 
 extern SecurityManager securityManager;

@@ -29,7 +29,6 @@ const char* getResetReasonString(esp_reset_reason_t reason) noexcept {
 
 CrashManager::CrashManager() noexcept
     : m_initialized(false), m_dirty(false), m_bootCounter(0), m_lastIdCounter(0) {
-    m_crashes.reserve(kMaxCrashLogs);
 }
 
 CrashManager::~CrashManager() noexcept {

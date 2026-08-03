@@ -5,7 +5,6 @@ ScreenManager screenManager;
 ScreenManager::ScreenManager() noexcept
     : m_initialized(false)
     , m_homeScreen(ScreenID::DASHBOARD) {
-    m_stack.reserve(kMaxStackDepth);
 }
 
 ScreenManager::~ScreenManager() noexcept = default;

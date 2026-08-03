@@ -6,8 +6,6 @@ LearningManager learningManager;
 
 LearningManager::LearningManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0), m_lastAnalysisTime(0) {
-    m_observations.reserve(kMaxObservations);
-    m_patterns.reserve(kMaxPatterns);
 }
 
 LearningManager::~LearningManager() noexcept {

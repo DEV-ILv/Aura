@@ -10,7 +10,6 @@ DiagnosticsManager diagnosticsManager;
 
 DiagnosticsManager::DiagnosticsManager() noexcept
     : m_initialized(false) {
-    m_results.reserve(DIAG_MAX_COMPONENTS);
 }
 
 DiagnosticsManager::~DiagnosticsManager() noexcept {

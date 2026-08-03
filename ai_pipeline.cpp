@@ -14,7 +14,6 @@ AIPipeline::AIPipeline() noexcept
     , m_sttStartMs(0)
     , m_aiStartMs(0)
     , m_ttsStartMs(0) {
-    m_providers.reserve(4);
 }
 
 AIPipeline::~AIPipeline() noexcept = default;

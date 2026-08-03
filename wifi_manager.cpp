@@ -163,6 +163,11 @@ bool WifiManager::connect(const char* ssid, const char* password) noexcept {
   } else {
     memset(m_password, 0, sizeof(m_password));
   }
+
+  // Persist credentials to NVS so the device reconnects automatically after
+  // a reboot or power loss. Without this, a reboot loses the network and the
+  // user is forced to reconfigure via the setup portal.
+  saveCredentials(m_ssid, m_password);
   
   // Set WiFi mode to station
   WiFi.mode(WIFI_STA);

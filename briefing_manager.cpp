@@ -19,8 +19,6 @@ BriefingManager::BriefingManager() noexcept
     , m_lastIdCounter(0)
     , m_lastGenerateTime(0)
     , m_summariesDirty(false) {
-    m_records.reserve(kMaxRecords);
-    m_summaries.reserve(kMaxSummaries);
 }
 
 BriefingManager::~BriefingManager() noexcept {

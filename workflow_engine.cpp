@@ -11,8 +11,6 @@ WorkflowEngine workflowEngine;
 
 WorkflowEngine::WorkflowEngine() noexcept
     : Service(kStaticName, BootPriority::PRIORITY_LOW) {
-    m_workflows.reserve(kMaxWorkflows);
-    m_active.reserve(kMaxActiveInstances);
 }
 
 WorkflowEngine::~WorkflowEngine() noexcept = default;

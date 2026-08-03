@@ -10,7 +10,6 @@ ReflectionManager reflectionManager;
 
 ReflectionManager::ReflectionManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastRunDay(0), m_lastIdCounter(0) {
-    m_history.reserve(kMaxHistory);
 }
 
 ReflectionManager::~ReflectionManager() noexcept { if (m_dirty) save(); }

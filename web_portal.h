@@ -7,6 +7,8 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <esp_system.h>
+#include <map>
+#include <mbedtls/sha256.h>
 
 #include "config.h"
 #include "logger.h"
@@ -389,6 +391,7 @@ private:
     void handleApiAuthLogin() noexcept;
     void handleApiAuthLogout() noexcept;
     void handleApiAuthStatus() noexcept;
+    void handleApiAuthChangePassword() noexcept;
 
     // Startup greeting
     void handleApiStartupSettings() noexcept;
@@ -458,6 +461,7 @@ private:
     void handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) noexcept;
     void webSocketBroadcast(String json) noexcept;
     void webSocketBroadcastDashboard() noexcept;
+    void webSocketBroadcastModuleStatus() noexcept;
 
     // V3.1 Wake Word API handlers
     void handleApiWakeWordStatus() noexcept;
@@ -507,8 +511,16 @@ private:
     bool isAuthenticated() noexcept;
     bool isAuthenticatedOrReject() noexcept;
     String generateSessionToken() noexcept;
+    String generateRandomPassword() noexcept;
+    bool secureEquals(const String& a, const String& b) noexcept;
     bool loadAuthCredentials() noexcept;
     bool saveAuthCredentials(const String& username, const String& password) noexcept;
+    void sendToAuthenticatedClients(String json) noexcept;
+    void handleWebSocketAuthMessage(uint8_t num, const String& msg) noexcept;
+    bool verifyWebOtaSignature(const uint8_t hash[32], const String& sigHex) noexcept;
+    void resetLoginTracker(const String& ip) noexcept;
+    bool isLoginLockedOut(const String& ip) noexcept;
+    void recordFailedLogin(const String& ip) noexcept;
 
     /**
      * @brief Serves the SPA entry point (index.html).
@@ -598,22 +610,34 @@ private:
     unsigned long m_lastWsPublish;
     unsigned long m_lastWsPing;
 
+    // WebSocket per-client authentication state (WS_MAX_CLIENTS from config.h)
+    bool m_wsAuth[WS_MAX_CLIENTS];
+
+    // Optional Web-OTA signature verification state
+    mbedtls_sha256_context m_otaSha256;
+    bool m_otaHashing;
+
     // Auth state
     String m_authUsername;
     String m_authPassword;
+    bool m_authMustChange{false};
     String m_sessionToken;
     unsigned long m_sessionCreated{0};
     Preferences m_authPrefs;
     static constexpr unsigned long kSessionTimeoutMs{3600000UL};  // 1 hour
     static constexpr const char* kAuthNamespace{"auraauth"};
+    static constexpr uint32_t kAuthCredVersion{3};  // bump to re-migrate auth NVS layout
     static constexpr const char* kDefaultUsername{Secrets::WEB_USERNAME};
-    static constexpr const char* kDefaultPassword{Secrets::WEB_PASSWORD};
 
-    // Rate limiting
-    uint8_t m_loginAttempts{0};
-    unsigned long m_loginLockoutUntil{0};
+    // Per-IP login rate limiting
+    struct LoginTracker {
+        uint8_t attempts{0};
+        unsigned long lockoutUntil{0};
+    };
+    std::map<String, LoginTracker> m_loginTrackers;
     static constexpr uint8_t kMaxLoginAttempts{5};
     static constexpr unsigned long kLoginLockoutDurationMs{30000UL};
+    static constexpr size_t kMaxTrackedIps{32};
 };
 
 /**

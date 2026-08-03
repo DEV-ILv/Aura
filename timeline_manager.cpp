@@ -5,7 +5,6 @@ TimelineManager timelineManager;
 
 TimelineManager::TimelineManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0), m_lastBatchSave(0) {
-    m_entries.reserve(kMaxEntries);
 }
 
 TimelineManager::~TimelineManager() noexcept {

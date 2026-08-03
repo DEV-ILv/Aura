@@ -2,6 +2,7 @@
 #include <new>
 #include <base64.h>
 #include <cstring>
+#include <esp_task_wdt.h>
 
 /// Global OtaManager instance
 OtaManager otaManager;
@@ -433,6 +434,10 @@ bool OtaManager::connectServer() noexcept {
 
     int httpCode = m_http.GET();
 
+    // The GET above can block up to the 30s timeout on a flaky network. Feed
+    // the task watchdog so the loop task is not reset mid-request.
+    esp_task_wdt_reset();
+
     if (httpCode != HTTP_CODE_OK) {
         Logger::error(kLogCategory, "Server request failed: %d", httpCode);
         if (httpCode == HTTP_CODE_UNAUTHORIZED || httpCode == HTTP_CODE_FORBIDDEN) {
@@ -461,6 +466,7 @@ bool OtaManager::downloadFirmware() noexcept {
         }
 
         int httpCode = m_http.GET();
+        esp_task_wdt_reset();  // feed watchdog after potentially blocking GET
         if (httpCode != HTTP_CODE_OK) {
             Logger::error(kLogCategory, "Download request failed: %d", httpCode);
             m_http.end();
@@ -492,6 +498,7 @@ bool OtaManager::downloadFirmware() noexcept {
     unsigned long chunkStart = millis();
 
     while (stream->available() && bytesRead < kChunkSize) {
+        esp_task_wdt_reset();  // feed watchdog during long downloads
         if (millis() - chunkStart > kDownloadTimeoutMs) {
             Logger::error(kLogCategory, "Download chunk timeout");
             return false;
@@ -671,10 +678,12 @@ void OtaManager::sha256Final(uint8_t hash[32]) noexcept {
 }
 
 bool OtaManager::verifyFirmwareSignature(const uint8_t hash[32]) const noexcept {
-    // If no signing key is configured, skip verification (insecure fallback)
+    // FAIL CLOSED: if no signing key is embedded, reject the firmware. The
+    // insecure "skip verification when key is empty" fallback has been removed
+    // so unsigned or tampered images can never be installed silently.
     if (kFirmwareSigningKeyLen == 0) {
-        Logger::warning(kLogCategory, "No firmware signing key — skipping signature verification");
-        return true;
+        Logger::error(kLogCategory, "No firmware signing key embedded — refusing unsigned update");
+        return false;
     }
 
     // If server did not provide a signature, reject

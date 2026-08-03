@@ -79,10 +79,6 @@ GeminiClient::GeminiClient() noexcept
     , m_lastPromptReloadCheck(0)
     , m_systemPromptVersion(0)
     , m_apiKey(Secrets::GEMINI_API_KEY) {
-    m_responseBuffer.reserve(kBufferReserveSize);
-    m_requestBuffer.reserve(kBufferReserveSize);
-    m_streamingBuffer.reserve(kBufferReserveSize);
-    m_conversation.reserve(kMaxConversationTurns);
 }
 
 GeminiClient::~GeminiClient() noexcept {

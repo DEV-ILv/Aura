@@ -6,6 +6,16 @@
 
 AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. It combines cloud AI (Gemini, Google Speech-to-Text, Google Text-to-Speech) with an offline fallback assistant, a full web configuration portal, and a suite of personal-productivity features — reminders, goals, habits, planning, study tools, daily briefings, reflections, a knowledge graph, documents, workspaces, and proactive recommendations — all driven from a small OLED display, an I2S microphone/speaker pair, an LED ring, a touch sensor, and SD-card storage.
 
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [SECURITY.md](SECURITY.md) | Security policy, reporting, and hardening overview |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, coding standards, and contribution workflow |
+| [CHANGELOG.md](CHANGELOG.md) | Release history and the Security Hardening V1 notes |
+| [docs/ota-signing.md](docs/ota-signing.md) | OTA key generation, signing, rotation, CI |
+| [`aura_companion/.env.example`](../aura_companion/.env.example) | Companion cloud-credentials template (placeholders only) |
+
 ## Hardware
 
 | Component | Interface | Pins (config.h) |
@@ -33,7 +43,11 @@ AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. I
 
 - `config.h` — pins, identity, AI endpoint URLs, timing constants.
 - `version.h` — single-source versioning (1.0.0, Mark III "Phoenix").
-- `secrets.h` — API keys, AP credentials, web credentials, signing keys (never commit real values).
+- `secrets.h` — API keys, AP credentials, web credentials, signing keys (never commit real values). **This file is git-ignored** — copy the committed template before building:
+  ```sh
+  copy secrets.h.example secrets.h   # Windows
+  cp secrets.h.example secrets.h     # macOS / Linux
+  ```
 - `firmware_keys.h` — ECDSA P-256 public key for OTA verification.
 - Runtime settings via `SettingsManager`; Wi-Fi credentials in NVS (`aura_wifi`).
 
@@ -72,6 +86,68 @@ New components (`Aura_programs/`):
 Tunables live in `config.h` under `LOCAL_AI_*`. A 12-case self-test runs at boot
 (`LOCAL_AI_SELF_TEST_ON_BOOT`), and `/api/offline-ai/test` remains available from
 the web portal. See `CHANGELOG.md` for the full Phase 3 entry.
+
+## Headless development mode (Phase 4)
+
+AURA OS can run on a **bare ESP32-WROOM-32 with only a USB cable** — no OLED,
+mic, speaker, LED ring, touch sensor, SD card, or sensors attached. When a
+peripheral is missing the firmware logs a warning, disables **only** that module,
+and continues booting. It never aborts for a missing peripheral, so the full
+headless feature set stays available:
+
+- Wi-Fi (STA with saved credentials, or AP setup portal), mDNS
+- Web portal + REST API (`http://<device>/api`)
+- WebSocket live feed (dashboard + `module_status` broadcasts)
+- Local AI engine, Gemini, Memory, Planner, Goals, Habits, Knowledge Graph,
+  Reminders, Workspaces, OTA, Settings, Companion App
+
+### How it works
+
+- `HEADLESS_MODE_AUTO` (default `true`) — at boot the firmware probes the OLED.
+  If no display is detected it enables headless automatically and prints
+  `AURA Headless Mode Enabled`.
+- `HEADLESS_MODE_FORCE` (default `false`) — set to `true` to force headless even
+  when all hardware is present (handy for bench testing).
+- Optional modules disabled in headless mode: **Display, LED Ring, Microphone,
+  Speaker, Touch, sensors**. SD card reflects its live mount state.
+
+### Runtime status
+
+Every service reports a runtime status (`ONLINE` / `OFFLINE` / `DISABLED` /
+`ERROR`) through the `ServiceStatusManager`. `GET /api/status` now returns, in
+addition to the legacy fields, the firmware version, `headless` flag + `mode`,
+a per-module status map, `connected_modules` / `disabled_modules` lists,
+`memory_usage`, `cpu_usage`, Wi-Fi details, and flash usage. Status changes are
+pushed to WebSocket clients as `{"type":"module_status","modules":{…}}`.
+
+### Serial boot banner
+
+After boot, the serial console prints:
+
+```
+==============================================
+        AURA AI Desktop Assistant
+----------------------------------------------
+Firmware : <version>
+Board    : ESP32-WROOM-32
+Headless : ENABLED (auto)
+Enabled  : ["wifi","web_portal",...]
+Disabled : ["display","microphone",...]
+Wi-Fi    : CONNECTED (<ssid>) | AP Mode (<ssid>)
+REST     : http://<ip>/api
+WebSocket: ws://<ip>:81
+Gemini   : Online | Offline
+----------------------------------------------
+READY
+==============================================
+```
+
+### Companion App
+
+The Companion App shows a headless banner, marks disabled modules grey in the
+Module Status sections (Dashboard + System Monitor), and omits module-dependent
+controls when the corresponding module is not available. Headless state updates
+live over WebSocket.
 
 ## Architecture in brief
 

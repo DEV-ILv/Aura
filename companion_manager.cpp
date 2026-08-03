@@ -5,8 +5,6 @@ CompanionManager companionManager;
 
 CompanionManager::CompanionManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastRetryTime(0), m_lastIdCounter(0) {
-    m_devices.reserve(kMaxDevices);
-    m_messages.reserve(kMaxMessages);
 }
 
 CompanionManager::~CompanionManager() noexcept {

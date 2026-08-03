@@ -4,7 +4,6 @@
 PlannerManager plannerManager;
 
 PlannerManager::PlannerManager() noexcept : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_tasks.reserve(kMaxTasks);
 }
 
 PlannerManager::~PlannerManager() noexcept { if (m_dirty) save(); }

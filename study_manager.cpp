@@ -5,9 +5,6 @@
 StudyManager studyManager;
 
 StudyManager::StudyManager() noexcept : m_initialized(false), m_lastIdCounter(0) {
-    m_subjects.reserve(kMaxSubjects);
-    m_sessions.reserve(kMaxSessions);
-    m_flashcards.reserve(kMaxFlashCards);
 }
 
 StudyManager::~StudyManager() noexcept {

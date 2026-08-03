@@ -10,8 +10,6 @@ TaskScheduler::TaskScheduler() noexcept
     , m_totalTasksRun(0)
     , m_totalQueueTimeMs(0)
     , m_suspended(false) {
-    m_tasks.reserve(kMaxTasks);
-    m_completedLog.reserve(kMaxCompletedLog);
 }
 
 TaskScheduler::~TaskScheduler() noexcept = default;

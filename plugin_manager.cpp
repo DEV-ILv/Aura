@@ -66,7 +66,6 @@ int findMatchingBrace(const String& json, int openPos) noexcept {
 
 PluginManager::PluginManager() noexcept
     : m_initialized(false), m_dirty(false) {
-    m_plugins.reserve(kMaxPlugins);
 }
 
 PluginManager::~PluginManager() noexcept {

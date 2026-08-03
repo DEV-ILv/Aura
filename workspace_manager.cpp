@@ -6,7 +6,6 @@ WorkspaceManager workspaceManager;
 
 WorkspaceManager::WorkspaceManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_workspaces.reserve(kMaxWorkspaces);
 }
 
 WorkspaceManager::~WorkspaceManager() noexcept {

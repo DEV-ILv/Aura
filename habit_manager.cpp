@@ -4,7 +4,6 @@
 HabitManager habitManager;
 
 HabitManager::HabitManager() noexcept : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_habits.reserve(kMaxHabits);
 }
 
 HabitManager::~HabitManager() noexcept { if (m_dirty) save(); }

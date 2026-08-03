@@ -1,0 +1,53 @@
+# =============================================================================
+# AURA firmware - Git ignore rules
+# =============================================================================
+# SECURITY: never commit credentials, keys, or build artifacts.
+
+# Real secrets live in secrets.h - this file is git-ignored.
+# A committed template lives in secrets.h.example; copy it to secrets.h before
+# building:  copy secrets.h.example secrets.h
+secrets.h
+secrets.h.bak
+
+# Signing/private key material (tools/generate_keypair output).
+# Only the PUBLIC key (firmware_keys.h / keys/public.h) is ever committed.
+keys/
+*.pem
+*.key
+*.p12
+*.pfx
+*.csr
+
+# OTA / build output
+build/
+dist/
+out/
+*.bin
+*.elf
+*.map
+*.log
+*.hex
+sig*.txt
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+
+# OS noise
+Thumbs.db
+.DS_Store
+
+# Runtime / cache
+data/cache/
+
+# Python tooling caches
+__pycache__/
+*.pyc
+
+# Companion app (build outputs are handled by its own .gitignore when it is
+# moved into this repository)
+*.apk
+*.aab

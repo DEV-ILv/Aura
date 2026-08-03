@@ -13,7 +13,6 @@ SemanticSearchManager semanticSearchManager;
 
 SemanticSearchManager::SemanticSearchManager() noexcept
     : m_initialized(false) {
-    m_cache.reserve(kMaxCache);
 }
 
 SemanticSearchManager::~SemanticSearchManager() noexcept {}

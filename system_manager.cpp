@@ -166,7 +166,9 @@ SystemManager::SystemManager() noexcept
       m_lastHealthCheck(0),
       m_moduleInitStartTime(0),
       m_initModuleIndex(0),
-      m_safeMode(false) {
+      m_safeMode(false),
+      m_headless(false),
+      m_headlessMode(HeadlessMode::HM_NORMAL) {
 }
 
 SystemManager::~SystemManager() noexcept {
@@ -266,6 +268,7 @@ void SystemManager::update() noexcept {
     if (now - m_lastHealthCheck >= kHealthCheckIntervalMs) {
         m_lastHealthCheck = now;
         checkHealth();
+        refreshDynamicServiceStatus();
     }
 
     // State-specific logic
@@ -471,6 +474,14 @@ bool SystemManager::isSafeMode() const noexcept {
     return m_safeMode;
 }
 
+bool SystemManager::isHeadless() const noexcept {
+    return m_headless;
+}
+
+HeadlessMode SystemManager::getHeadlessMode() const noexcept {
+    return m_headlessMode;
+}
+
 // ============================================================================
 // Private Methods
 // ============================================================================
@@ -511,9 +522,19 @@ void SystemManager::setError(SystemError error) noexcept {
 bool SystemManager::initializeModules() noexcept {
     m_moduleInitStartTime = millis();
 
+    // Headless development mode: force from config before probing hardware.
+    // Auto-detection (HEADLESS_MODE_AUTO) is applied when the display probe
+    // below fails. In headless mode optional peripherals are disabled with a
+    // warning and boot NEVER aborts for a missing peripheral.
+    m_headless = HEADLESS_MODE_FORCE;
+    m_headlessMode = m_headless ? HeadlessMode::HM_FORCED : HeadlessMode::HM_NORMAL;
+    if (m_headless) {
+        Logger::info(kLogCategory, "Headless mode forced by config");
+    }
+
     // Check for safe mode (touch held during boot OR boot loop detected)
     // Non-blocking: poll with yield() instead of delay()
-    if (!m_safeMode) {
+    if (!m_safeMode && !m_headless) {
         unsigned long touchStart = millis();
         unsigned long touchCount = 0;
         unsigned long touchSamples = 0;
@@ -522,8 +543,8 @@ bool SystemManager::initializeModules() noexcept {
                 touchCount++;
             }
             touchSamples++;
-            // Feed watchdog and yield to other tasks
-            esp_task_wdt_reset();
+            // Feed watchdog (only if the current task is registered) and yield to other tasks
+            if (esp_task_wdt_status(nullptr) == ESP_OK) esp_task_wdt_reset();
             yield();
             delay(1);
         }
@@ -539,12 +560,20 @@ bool SystemManager::initializeModules() noexcept {
         // Only initialize essential modules for safe mode
     }
 
+    // Initialize service status registry first so all modules can be tracked
+    serviceStatusManager.initialize();
+    serviceStatusManager.setStatus(ServiceId::SVC_SYSTEM, ServiceStatus::SS_ONLINE);
+
     // 1. StorageManager (must be first - other modules depend on it)
     Logger::info(kLogCategory, "Initializing: %s", kModuleNames[0]);
     if (!storageManager.initialize()) {
-        Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[0]);
-        return false;
+        Logger::error(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[0]);
+        serviceStatusManager.setStatus(ServiceId::SVC_STORAGE, ServiceStatus::SS_ERROR);
+    } else {
+        serviceStatusManager.setStatus(ServiceId::SVC_STORAGE, ServiceStatus::SS_ONLINE);
     }
+    serviceStatusManager.setStatus(ServiceId::SVC_SD_CARD,
+        storageManager.isSDMounted() ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
     m_initModuleIndex = 1;
 
     // 2. MemoryManager (needs StorageManager)
@@ -574,15 +603,36 @@ bool SystemManager::initializeModules() noexcept {
 
     // 3. DisplayManager (early for status feedback)
     Logger::info(kLogCategory, "Initializing: %s", kModuleNames[2]);
-    if (!displayManager.initialize()) {
-        Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[2]);
-        return false;
-    }
+    {
+        bool displayOk = false;
+        if (m_headless) {
+            // Forced headless: display is intentionally disabled
+            serviceStatusManager.setStatus(ServiceId::SVC_DISPLAY, ServiceStatus::SS_DISABLED);
+        } else {
+            displayOk = displayManager.initialize();
+            if (!displayOk) {
+                if (HEADLESS_MODE_AUTO) {
+                    m_headless = true;
+                    m_headlessMode = HeadlessMode::HM_AUTO;
+                    serviceStatusManager.setStatus(ServiceId::SVC_DISPLAY, ServiceStatus::SS_DISABLED);
+                    Logger::warning(kLogCategory, "Display not detected - AURA Headless Mode Enabled");
+                } else {
+                    Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[2]);
+                    return false;
+                }
+            } else {
+                serviceStatusManager.setStatus(ServiceId::SVC_DISPLAY, ServiceStatus::SS_ONLINE);
+            }
+        }
+        serviceStatusManager.setHeadless(m_headless, m_headlessMode);
 
-    if (m_safeMode) {
-        displayManager.showMessage("SAFE MODE", "Recovery mode active");
-    } else {
-        displayManager.showBoot(10);
+        if (displayOk) {
+            if (m_safeMode) {
+                displayManager.showMessage("SAFE MODE", "Recovery mode active");
+            } else {
+                displayManager.showBoot(10);
+            }
+        }
     }
     m_initModuleIndex = 3;
 
@@ -592,6 +642,7 @@ bool SystemManager::initializeModules() noexcept {
         Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[1]);
         return false;
     }
+    serviceStatusManager.setStatus(ServiceId::SVC_WIFI, ServiceStatus::SS_ONLINE);
 
     // Try to connect with stored credentials
     if (wifiManager.hasCredentials()) {
@@ -623,29 +674,40 @@ bool SystemManager::initializeModules() noexcept {
     m_initModuleIndex = 4;
 
     // 5. AudioManager
-    if (!m_safeMode) {
+    if (!m_safeMode && !m_headless) {
         Logger::info(kLogCategory, "Initializing: %s", kModuleNames[3]);
         if (!audioManager.initialize()) {
-            Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[3]);
-            return false;
+            Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[3]);
         }
+    }
+    if (m_headless) {
+        serviceStatusManager.setStatus(ServiceId::SVC_MICROPHONE, ServiceStatus::SS_DISABLED);
+        serviceStatusManager.setStatus(ServiceId::SVC_SPEAKER, ServiceStatus::SS_DISABLED);
+    } else {
+        serviceStatusManager.setStatus(ServiceId::SVC_MICROPHONE,
+            audioManager.isInitialized() ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
+        serviceStatusManager.setStatus(ServiceId::SVC_SPEAKER,
+            audioManager.isInitialized() ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
     }
     m_initModuleIndex = 5;
 
     // 6. LedRing (visual feedback, independent)
-    if (!m_safeMode) {
+    if (!m_safeMode && !m_headless) {
         Logger::info(kLogCategory, "Initializing: %s", kModuleNames[13]);
         ledRing.initialize();
         Logger::info(kLogCategory, "Initialized: %s", kModuleNames[13]);
     }
+    serviceStatusManager.setStatus(ServiceId::SVC_LED_RING,
+        m_headless ? ServiceStatus::SS_DISABLED : ServiceStatus::SS_ONLINE);
+    serviceStatusManager.setStatus(ServiceId::SVC_TOUCH,
+        m_headless ? ServiceStatus::SS_DISABLED : ServiceStatus::SS_ONLINE);
     m_initModuleIndex = 6;
 
     // 7. SoundManager (needs AudioManager)
-    if (!m_safeMode) {
+    if (!m_safeMode && !m_headless) {
         Logger::info(kLogCategory, "Initializing: %s", kModuleNames[11]);
         if (!soundManager.initialize()) {
-            Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[11]);
-            return false;
+            Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[11]);
         }
     }
     m_initModuleIndex = 7;
@@ -665,6 +727,9 @@ bool SystemManager::initializeModules() noexcept {
         return false;
     }
     webPortal.start();
+    serviceStatusManager.setStatus(ServiceId::SVC_WEB_PORTAL, ServiceStatus::SS_ONLINE);
+    serviceStatusManager.setStatus(ServiceId::SVC_REST, ServiceStatus::SS_ONLINE);
+    serviceStatusManager.setStatus(ServiceId::SVC_WEBSOCKET, ServiceStatus::SS_ONLINE);
     displayManager.showBoot(70);
     m_initModuleIndex = 8;
 
@@ -723,6 +788,8 @@ bool SystemManager::initializeModules() noexcept {
     if (m_safeMode) {
         Logger::info(kLogCategory, "Safe mode initialized - limited modules active");
         displayManager.showMessage("SAFE MODE", "Use Web Portal for OTA recovery");
+        syncServiceStatuses();
+        printBootBanner();
         return true;
     }
 
@@ -1030,6 +1097,9 @@ bool SystemManager::initializeModules() noexcept {
     displayManager.showBoot(100);
     delay(100);
 
+    syncServiceStatuses();
+    printBootBanner();
+
     return true;
 }
 
@@ -1088,6 +1158,81 @@ void SystemManager::updateModules() noexcept {
         deviceMesh.update();
         executiveAssistant.update();
     }
+}
+
+void SystemManager::syncServiceStatuses() noexcept {
+    auto sync = [](ServiceId id, bool ok) {
+        serviceStatusManager.setStatus(id, ok ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
+    };
+
+    sync(ServiceId::SVC_GEMINI, geminiClient.isInitialized());
+    sync(ServiceId::SVC_LOCAL_AI, tinyAIManager.isInitialized());
+    sync(ServiceId::SVC_MEMORY, memoryManager.isInitialized());
+    sync(ServiceId::SVC_PLANNER, plannerManager.isInitialized());
+    sync(ServiceId::SVC_GOALS, goalManager.isInitialized());
+    sync(ServiceId::SVC_HABITS, habitManager.isInitialized());
+    sync(ServiceId::SVC_KNOWLEDGE_GRAPH, knowledgeGraphManager.isInitialized());
+    sync(ServiceId::SVC_REMINDERS, reminderManager.isInitialized());
+    sync(ServiceId::SVC_WORKSPACES, workspaceManager.isInitialized());
+    sync(ServiceId::SVC_OTA, otaManager.isInitialized());
+    sync(ServiceId::SVC_SETTINGS, settingsManager.isInitialized());
+    sync(ServiceId::SVC_COMPANION, companionManager.isInitialized());
+
+    // No BME280/BH1750 sensor modules exist in this firmware build.
+    serviceStatusManager.setStatus(ServiceId::SVC_SENSORS,
+        m_headless ? ServiceStatus::SS_DISABLED : ServiceStatus::SS_OFFLINE);
+
+    // Wi-Fi connectivity is dynamic; report manager availability as ONLINE
+    // and let the WebSocket/status payload reflect live connection state.
+    if (serviceStatusManager.getStatus(ServiceId::SVC_WIFI) == ServiceStatus::SS_UNKNOWN) {
+        serviceStatusManager.setStatus(ServiceId::SVC_WIFI, ServiceStatus::SS_ONLINE);
+    }
+}
+
+void SystemManager::refreshDynamicServiceStatus() noexcept {
+    // Live peripheral re-detection: SD card hot-plug, Wi-Fi state.
+    ServiceStatus sdStatus = ServiceStatus::SS_OFFLINE;
+    if (m_headless) {
+        sdStatus = ServiceStatus::SS_DISABLED;
+    } else if (storageManager.isSDMounted()) {
+        sdStatus = ServiceStatus::SS_ONLINE;
+    }
+    serviceStatusManager.setStatus(ServiceId::SVC_SD_CARD, sdStatus);
+
+    ServiceStatus wifiStatus = (wifiManager.getState() != WifiState::ERROR)
+                                   ? ServiceStatus::SS_ONLINE
+                                   : ServiceStatus::SS_OFFLINE;
+    serviceStatusManager.setStatus(ServiceId::SVC_WIFI, wifiStatus);
+}
+
+void SystemManager::printBootBanner() noexcept {
+    // Serial boot banner (direct to Serial for visual formatting)
+    Serial.println();
+    Serial.println("==============================================");
+    Serial.printf("        %s\n", aura::identity::kProjectName);
+    Serial.println("----------------------------------------------");
+    Serial.printf("Firmware : %s\n", aura::identity::kVersion);
+    Serial.printf("Board    : %s\n", aura::identity::kPlatform);
+    Serial.printf("Headless : %s (%s)\n",
+        m_headless ? "ENABLED" : "DISABLED",
+        m_headless ? serviceStatusManager.getHeadlessModeString() : "normal");
+
+    Serial.printf("Enabled  : %s\n", serviceStatusManager.getConnectedJson().c_str());
+    Serial.printf("Disabled : %s\n", serviceStatusManager.getDisabledJson().c_str());
+
+    if (wifiManager.isConnected()) {
+        Serial.printf("Wi-Fi    : CONNECTED (%s)\n", WiFi.SSID().c_str());
+    } else {
+        Serial.printf("Wi-Fi    : AP Mode (%s)\n", Secrets::AP_SSID);
+    }
+    Serial.printf("REST     : http://%s/api\n", WiFi.localIP().toString().c_str());
+    Serial.printf("WebSocket: ws://%s:81\n", WiFi.localIP().toString().c_str());
+    Serial.printf("Gemini   : %s\n",
+        geminiClient.isInitialized() ? "Online" : "Offline");
+    Serial.println("----------------------------------------------");
+    Serial.println("READY");
+    Serial.println("==============================================");
+    Serial.println();
 }
 
 void SystemManager::monitorMemory() noexcept {

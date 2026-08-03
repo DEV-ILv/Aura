@@ -6,8 +6,6 @@ DecisionManager decisionManager;
 
 DecisionManager::DecisionManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_pendingOptions.reserve(DECISION_MAX_OPTIONS);
-    m_history.reserve(kMaxHistory);
 }
 
 DecisionManager::~DecisionManager() noexcept {

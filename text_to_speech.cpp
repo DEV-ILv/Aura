@@ -31,7 +31,6 @@ TextToSpeech::TextToSpeech() noexcept
     strncpy(m_language, kDefaultLanguage, sizeof(m_language) - 1);
     m_language[sizeof(m_language) - 1] = '\0';
     m_rootCA[0] = '\0';
-    m_queue.reserve(kMaxQueueSize);
 }
 
 TextToSpeech::~TextToSpeech() noexcept {

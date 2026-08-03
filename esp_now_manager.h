@@ -151,6 +151,16 @@ private:
     static constexpr unsigned long kNodeTimeoutMs = 60000UL;
     static constexpr size_t kMaxPayloadSize = 224;
     static constexpr uint8_t kBroadcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+    // Strong shared primary master key. All AURA nodes run the same firmware so
+    // they derive an identical per-peer LMK from this key, enabling encrypted
+    // ESP-NOW links. NOTE: this key ships in firmware by design (single-user
+    // device mesh). A future release should replace it with a per-install key
+    // exchanged during an authenticated pairing handshake.
+    static constexpr uint8_t kPrimaryMasterKey[16] = {
+        0x9f, 0x2c, 0x71, 0x5e, 0xa3, 0x8b, 0x44, 0xd7,
+        0x1e, 0x06, 0xbb, 0x93, 0x5a, 0xc2, 0xef, 0x31
+    };
 };
 
 extern EspNowManager espNowManager;

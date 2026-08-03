@@ -9,7 +9,6 @@ SceneEngine::SceneEngine() noexcept
     , m_activeScene(SceneID::SCENE_DEFAULT)
     , m_previousSaved(false)
     , m_initialized(false) {
-    m_scenes.reserve(kMaxScenes);
 }
 
 SceneEngine::~SceneEngine() noexcept = default;

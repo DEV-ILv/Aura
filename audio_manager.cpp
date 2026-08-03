@@ -64,7 +64,6 @@ AudioManager::AudioManager() noexcept
       m_noiseThreshold(WAKE_WORD_NOISE_THRESHOLD_DEFAULT),
       m_queueProcessing(false)
 {
-    m_speechQueue.reserve(kMaxSpeechQueue);
 }
 
 AudioManager::~AudioManager() noexcept

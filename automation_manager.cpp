@@ -11,8 +11,6 @@ AutomationManager automationManager;
 
 AutomationManager::AutomationManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastEvaluation(0), m_lastIdCounter(0) {
-    m_scripts.reserve(kMaxScripts);
-    m_nlPatterns.reserve(kMaxNLPatterns);
 }
 
 AutomationManager::~AutomationManager() noexcept { if (m_dirty) save(); }

@@ -4,7 +4,81 @@ All notable changes to AURA OS are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 AURA OS is currently at version `1.0.0` (Mark III "Phoenix"), Development channel.
-Build metrics baseline: 61% flash (1,938,167 / 3,145,728 B) · 24% RAM (79,000 / 327,680 B) · 0 warnings.
+Build metrics baseline: 61% flash (1,929,939 / 3,145,728 B) · 24% RAM (79,384 / 327,680 B) · 0 warnings.
+
+## [Unreleased] — Security Hardening V1
+
+Authentication, transport security, and safe-by-default behavior for the public
+GitHub release. Addresses the Critical (C1–C5) and High findings of the AURA V1
+security review.
+
+### Added
+
+- **First-boot admin credentials (C4)** — no more hardcoded `Devil`/`DevilDevil`
+  defaults in `secrets.h`. On first boot the device generates a strong random
+  32-hex-char admin password (`esp_random()`), stores it in NVS, and prints it to
+  the Serial monitor. The web portal flags the credential with `must_change` and
+  forces a password change on first login (`/api/auth/change-password`,
+  minimum 8 characters). Existing user credentials are preserved across NVS
+  layout migrations (`kAuthCredVersion = 3`); they are never reset to defaults.
+- **Per-IP login rate limiting** — replaces the global brute-force counter with a
+  per-source-address tracker (5 attempts → 30 s lockout, bounded map of 32 IPs),
+  so one attacker cannot lock out every client.
+- **`/api/auth/status` and `/api/auth/change-password`** endpoints plus a web-portal
+  sign-in flow: `POST /api/auth/login` returns `{ token, expiresIn, must_change }`;
+  all API, OTA, restart, factory-reset, and Wi-Fi routes now require the
+  `X-Auth-Token` header (401 otherwise).
+- **Firmware OTA signature verification (C3)** — `OtaManager::verifyFirmwareSignature`
+  is now fail-closed (rejects when no key is embedded) and the web-portal OTA upload
+  verifies an optional `X-Signature`/`signature` ECDSA P-256 DER signature against the
+  embedded public key before applying (SHA-256 of the uploaded image). Missing
+  signature is logged as a warning. Tooling: `tools/generate_keypair.ps1` and
+  `tools/firmware_signer.ps1` (Windows PowerShell/.NET) alongside the existing
+  Python tools.
+- **ESP-NOW hardening** — encrypted links (`encrypt = true`, LMK derived from a
+  strong shared PMK instead of the guessable `"AURA_ESPNOW_KEY"`) and privileged
+  message types (text/commands/OTA) are only processed from PAIRED nodes.
+- **Async Wi-Fi recovery** — `RecoveryWiFi()` no longer blocks the main loop for
+  up to 10 s; recovery runs as a state machine finalized by `Update()`.
+- **`JSONBuilder::finalize()` off-by-one fix** — guarantees room for the closing
+  brace and terminator, preventing a write past the end of the buffer.
+- **`/api/status` is now authenticated** — status telemetry is no longer public.
+- **WebSocket authentication (C1)** — port 81 now requires a token handshake:
+  after connect the server sends `{"type":"auth_required"}` and the client must
+  reply `{"type":"auth","token":...}` (constant-time comparison + expiry) before
+  any telemetry is sent; invalid tokens are disconnected immediately. Cross-origin
+  browser handshakes are rejected via Origin validation. Telemetry broadcasts are
+  routed only to authenticated clients.
+- **Web SPA login** — `data/js/auth.js` + `data/css/auth.css`: full-screen sign-in
+  overlay, change-password modal, nav sign-out button, `X-Auth-Token` header on all
+  fetches and the OTA XHR, WebSocket auth handshake, and 401-driven session expiry.
+  Token persists per-tab in `sessionStorage` (never `localStorage`).
+
+### Changed
+
+- `secrets.h` / `secrets.h.example` — no default passwords (`WEB_PASSWORD ""`,
+  `AP_PASSWORD ""`); `WEB_USERNAME "admin"` remains the default username.
+- `security_manager.cpp` — boots unauthenticated (no implicit trust), `Authenticate`
+  validates a real token, `CheckToken` performs constant-time comparison, and
+  `Encrypt`/`Decrypt` delegate to `VaultManager`.
+- `wifi_manager.cpp` — `connect()` persists credentials to NVS so Wi-Fi settings
+  survive reboots (C2); `/api/wifi` POST saves and connects.
+- `ota_manager.cpp` — WDT feed after blocking HTTP calls and inside the download
+  chunk loop.
+- `web_portal.cpp` — factory reset now clears the `auraauth` NVS namespace so the
+  next boot regenerates fresh admin credentials.
+- Web SPA (`api.js`, `websocket.js`, `app.js`, `settings.js`, `ota.js`) — all
+  requests carry the session token; the UI blocks behind the sign-in overlay.
+
+### Security notes
+
+- ESP-NOW PMK ships in firmware by design (single-user device mesh). A future
+  release should replace it with a per-install key exchanged during an
+  authenticated pairing handshake.
+- Web OTA accepts unsigned images with a warning only; production deployments
+  should always sign firmware and send `X-Signature`.
+- `Secrets::WEB_PASSWORD`/`AP_PASSWORD` are now empty; any existing firmware
+  flashing must occur over USB with the new first-boot flow.
 
 ## [Unreleased] — Phase 3: Local AI Engine V2
 
@@ -84,6 +158,113 @@ now delegates to the new `LocalAIEngine` coordinator, so **no public API changed
   arrays, keeping RAM impact minimal (+880 B over the Phase-2 baseline).
 - No generic-chatbot conversion; the engine is a strict superset of the previous
   offline behaviour and still rule-based.
+
+---
+
+## [Unreleased] — Phase 4: Headless Development Mode
+
+Firmware now boots and runs on a bare ESP32-WROOM-32 with **no external
+hardware** (no OLED, mic, speaker, LED ring, touch, SD or sensors). Boot never
+aborts for a missing peripheral: each optional module is detected, logged, and
+disabled individually, while every headless-capable feature (Wi-Fi, AP/STA, web
+portal, REST, WebSocket, auth, Local AI, Gemini, Memory, Planner, Goals, Habits,
+Knowledge Graph, Reminders, Workspaces, OTA, Settings, Companion App) remains
+fully active.
+
+### Added
+
+- **`service_status_manager.h/.cpp`** — central runtime-status registry for every
+  firmware service (`ONLINE` / `OFFLINE` / `DISABLED` / `ERROR`), headless-mode
+  tracking (`normal` / `auto` / `forced`), JSON payloads for REST + WebSocket,
+  and change tracking for live module-status broadcasts.
+- **Headless Mode config** (`config.h`): `HEADLESS_MODE_AUTO` (default `true`,
+  enables headless when the OLED is not detected at boot) and
+  `HEADLESS_MODE_FORCE` (default `false`, forces headless regardless of hardware).
+- **`GET /api/status` full payload** — firmware version, `headless` flag, `mode`,
+  per-module status map, `connected_modules` / `disabled_modules` lists,
+  `memory_usage`, `cpu_usage`, `wifi` (connected/ssid/ip/rssi), `flash_used`,
+  `flash_total`, plus all legacy keys (`running`, `uptime`, `heap_free`,
+  `wifi_connected`, `requests`) for backward compatibility.
+- **WebSocket module-status broadcasts** — `{"type":"module_status","modules":{…}}`
+  emitted on status changes and on client connect (full snapshot), so the
+  Companion App reflects headless detection and hot-plug events live.
+- **Serial boot banner** — post-init banner showing AURA Firmware / Version /
+  Board / Headless Mode / Enabled Modules / Disabled Modules / Wi-Fi / REST /
+  WebSocket / Gemini / Ready, plus an `AURA Headless Mode Enabled` log on
+  auto-detection.
+- **Companion App headless UI** — headless banner on the shell + dashboard,
+  `SystemStatus` model extended with `headless`, `mode`, `modules`,
+  `connectedModules` / `unavailableModules`, and module-status badge grids on the
+  Dashboard and System Monitor screens (disabled modules render grey).
+
+### Changed
+
+- **`system_manager.cpp`** — `initializeModules()` no longer aborts on failed
+  optional hardware (Display, Audio, Sound, LED Ring); headless auto-detection is
+  applied at the display probe; statuses are synced to `serviceStatusManager`
+  during boot and refreshed every health-check cycle; `printBootBanner()` prints
+  the serial boot banner.
+- **`web_portal.cpp`** — `handleApiStatus()` delegates to
+  `serviceStatusManager.getStatusJson()`; `webSocketBroadcastModuleStatus()` added
+  to the `update()` loop and the WS `CONNECTED` handler.
+- **`system_manager.h`** — added `isHeadless()`, `getHeadlessMode()`,
+  `syncServiceStatuses()`, `refreshDynamicServiceStatus()`, `printBootBanner()`.
+- **`web_portal.h`** — added `webSocketBroadcastModuleStatus()`.
+- **`Aura_programs.ino`** — unchanged (banner is printed by `SystemManager`).
+
+### Fixed
+
+- `ServiceStatusManager` enum names are prefixed (`SVC_*`, `SS_*`, `HM_*`) to
+  avoid collisions with ESP32 core macros (`DISPLAY`, `ERROR`, …).
+- `wifiManager.isInitialized()` does not exist; Wi-Fi availability is now derived
+  from `WifiManager::getState()`.
+
+### Notes
+
+- Optional peripherals disabled in headless mode: Display, LED Ring, Microphone,
+  Speaker, Touch, sensors; SD card is reported per live mount state.
+- RAM impact of the new registry: ~110 B; no changes to the Phase 3 flash
+  baseline (61% flash, 24% RAM, 0 warnings).
+
+---
+
+## [Unreleased] — Startup Reliability & Authentication Standardization
+
+### Fixed
+
+- **Startup crash on bare ESP32 (boot loop / abort).** Global-manager
+  constructors eagerly `reserve()`d large containers before the heap was ready
+  (`_GLOBAL__sub_I_*` → `bad_alloc` in a `noexcept` ctor → `__terminate` →
+  `abort`, PC `0x40205ca3`). Moving the reserves into `initialize()` still blew
+  the ~230 KB heap (cumulative preallocation; `KnowledgeGraphManager::initialize()`
+  failed at `system_manager.cpp:860`). **All eager `reserve()` calls were removed
+  — in constructors and initializers — across 43 managers; containers now grow on
+  demand.** Verified at the binary level: all 96 `_GLOBAL__sub_I_*` constructors
+  disassemble to zero `operator new` / `__cxa_throw` calls.
+- **Watchdog lifecycle.** `esp_task_wdt_init()` returned `ESP_ERR_INVALID_STATE`
+  (259, "TWDT already initialized"); the old handler treated it as a failure and
+  never registered the loop task, producing 5,968× `task_wdt_reset(): task not
+  found` in 40 s. `initializeWatchdog()` now adopts the existing TWDT
+  (`esp_task_wdt_add(nullptr)`), and every reset site is guarded by
+  `esp_task_wdt_status(nullptr) == ESP_OK`. Verified on hardware: 0 abort / 0
+  panic / 0 WDT spam, ≥341 s continuous uptime.
+
+### Changed
+
+- **Authentication standardized** across firmware and Companion App:
+  - Web Portal / REST credentials default to **`Devil` / `Devil`**
+    (`Secrets::WEB_USERNAME` / `WEB_PASSWORD`).
+  - Setup hotspot is **`AURA_Setup` / `DevilDevil`** (WPA2 requires ≥8 chars;
+    the previous 5-char `Devil` would make `WiFi.softAP()` fail per core
+    `AP.cpp:224`).
+  - **`web_portal.cpp`** — NVS credential migration: a version marker
+    (`kAuthCredVersion`, key `version` in the `auraauth` namespace) resets any
+    stale stored credentials to the standardized defaults once on first boot
+    after upgrade, then leaves user-changed credentials untouched.
+    `saveAuthCredentials()` stamps the current version.
+  - **Companion App** `connection_screen.dart` — login fields are prefilled with
+    `Devil` / `Devil` on first run (returning users keep their remembered
+    username with a blank password).
 
 ---
 

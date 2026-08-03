@@ -68,9 +68,6 @@ MemoryManager::MemoryManager() noexcept
     , m_lastIdCounter(0)
     , m_lastMaintenance(0)
     , m_lastAgeRun(0) {
-    m_entries.reserve(m_maxEntries);
-    m_revisions.reserve(64);
-    m_conversations.reserve(kMaxConversations);
 }
 
 MemoryManager::~MemoryManager() noexcept {

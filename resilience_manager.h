@@ -90,11 +90,13 @@ private:
 
     FailureRecoveryPlan GetDefaultPlan(FailureType type) const noexcept;
     void PruneRecords() noexcept;
+    void FinalizeWifiRecovery(bool recovered) noexcept;
 
     static constexpr const char* kLogCategory = "Resilience";
     static constexpr size_t kMaxRecords = 100;
     static constexpr size_t kMaxFailureCount = 10;
     static constexpr unsigned long kCleanupIntervalMs = 60000UL;
+    static constexpr unsigned long kRecoveryWindowMs = 10000UL;
 
     FailureRecoveryPlan m_plans[12];
     std::vector<FailureRecord> m_records;
@@ -102,6 +104,8 @@ private:
     uint32_t m_totalRecoveries;
     unsigned long m_lastCleanup;
     bool m_initialized;
+    bool m_wifiRecoverPending;
+    unsigned long m_wifiRecoverStarted;
 };
 
 extern ResilienceManager resilienceManager;

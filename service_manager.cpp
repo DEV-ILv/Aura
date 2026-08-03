@@ -6,7 +6,6 @@ ServiceManager serviceManager;
 ServiceManager::ServiceManager() noexcept
     : m_initialized(false)
     , m_lastHealthCheck(0) {
-    m_services.reserve(kMaxServices);
 }
 
 ServiceManager::~ServiceManager() noexcept {

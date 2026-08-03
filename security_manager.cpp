@@ -1,5 +1,6 @@
 #include "security_manager.h"
 #include "settings_manager.h"
+#include "vault_manager.h"
 
 SecurityManager securityManager;
 
@@ -9,8 +10,6 @@ SecurityManager::SecurityManager() noexcept
     , m_authenticated(false)
     , m_currentPermission(Permission::NONE)
     , m_initialized(false) {
-    m_sessions.reserve(kMaxSessions);
-    m_auditLog.reserve(kMaxAuditEntries);
 }
 
 SecurityManager::~SecurityManager() noexcept = default;
@@ -19,13 +18,16 @@ bool SecurityManager::Initialize() noexcept {
     if (GetState() != ServiceState::UNINITIALIZED) return true;
     SetState(ServiceState::INITIALIZING);
 
-    // Default permission level from settings
-    m_currentPermission = Permission::SYSTEM; // SYSTEM until first authentication
-    m_authenticated = true; // Auto-authenticated at boot (single-user device)
+    // No implicit trust: the device starts unauthenticated. The web portal
+    // must successfully validate credentials and hand the session token to
+    // Authenticate() before any privileged operation is permitted.
+    m_currentPermission = Permission::NONE;
+    m_authenticated = false;
+    m_expectedToken = "";
 
     SetState(ServiceState::INITIALIZED);
     m_initialized = true;
-    LOG_INFO(kLogCategory, "SecurityManager initialized");
+    LOG_INFO(kLogCategory, "SecurityManager initialized (unauthenticated)");
     return true;
 }
 
@@ -38,16 +40,34 @@ void SecurityManager::Update() noexcept {
 }
 
 bool SecurityManager::Authenticate(const String& token) noexcept {
-    (void)token;
+    if (token.isEmpty()) {
+        m_authenticated = false;
+        m_currentPermission = Permission::NONE;
+        LogAudit(AuditEventType::LOGIN, "security",
+                 "Authentication failed: empty token", false);
+        return false;
+    }
+    m_expectedToken = token;
     m_authenticated = true;
     m_currentPermission = Permission::ADMIN;
     LogAudit(AuditEventType::LOGIN, "security", "User authenticated", true);
     return true;
 }
 
+bool SecurityManager::CheckToken(const String& token) const noexcept {
+    if (token.isEmpty() || m_expectedToken.isEmpty()) return false;
+    if (token.length() != m_expectedToken.length()) return false;
+    uint8_t diff = 0;
+    for (size_t i = 0; i < token.length(); ++i) {
+        diff |= static_cast<uint8_t>(token[i]) ^ static_cast<uint8_t>(m_expectedToken[i]);
+    }
+    return diff == 0;
+}
+
 void SecurityManager::Deauthenticate() noexcept {
     m_authenticated = false;
     m_currentPermission = Permission::NONE;
+    m_expectedToken = "";
     LogAudit(AuditEventType::LOGOUT, "security", "User deauthenticated", true);
 }
 
@@ -140,14 +160,18 @@ void SecurityManager::RevokeSession(const String& sessionId) noexcept {
 }
 
 String SecurityManager::Encrypt(const String& plaintext) noexcept {
-    (void)plaintext;
-    // Delegates to existing VaultManager for actual encryption
-    // Currently returns plaintext until VaultManager integration
+    if (vaultManager.isInitialized()) {
+        return vaultManager.encrypt(plaintext);
+    }
+    LogAudit(AuditEventType::ENCRYPTION_OPERATION, "security",
+             "Encrypt requested but VaultManager unavailable", false);
     return plaintext;
 }
 
 String SecurityManager::Decrypt(const String& ciphertext) noexcept {
-    (void)ciphertext;
+    if (vaultManager.isInitialized()) {
+        return vaultManager.decrypt(ciphertext);
+    }
     return ciphertext;
 }
 

@@ -107,6 +107,21 @@ constexpr const char* kCompiler     = __VERSION__;
 #define WEB_PORT               80
 
 //======================================================
+// HEADLESS DEVELOPMENT MODE
+//======================================================
+// HEADLESS_MODE_AUTO   : enable headless automatically when no display is
+//                        detected during boot (missing OLED -> headless).
+// HEADLESS_MODE_FORCE  : force headless even when all hardware is present.
+//                        Useful for bench testing with only ESP32 + USB.
+// When headless, optional hardware modules (Display, LED Ring, Microphone,
+// Speaker, Touch, sensors, SD) are disabled with a warning; boot NEVER aborts
+// for a missing peripheral. All headless-capable features (Wi-Fi, Web Portal,
+// REST, WebSocket, Local AI, Gemini, Memory, Planner, etc.) remain active.
+
+#define HEADLESS_MODE_AUTO          true
+#define HEADLESS_MODE_FORCE         false
+
+//======================================================
 // GOOGLE AI
 //======================================================
 

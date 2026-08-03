@@ -31,7 +31,6 @@ ExecutiveAssistant::ExecutiveAssistant() noexcept
     for (auto& c : m_categoryCooldowns) c = 0;
     for (auto& a : m_acceptedCount) a = 0;
     for (auto& d : m_dismissedCount) d = 0;
-    m_recommendations.reserve(kMaxActiveRecs + kMaxHistoryRecs);
 }
 
 ExecutiveAssistant::~ExecutiveAssistant() noexcept = default;

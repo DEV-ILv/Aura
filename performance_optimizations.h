@@ -219,12 +219,13 @@ public:
     }
 
     void finalize() noexcept {
-        // Replace trailing comma with closing brace
+        // Replace trailing comma with closing brace. Guarantee room for both
+        // the closing brace and the null terminator to avoid an off-by-one
+        // write past the end of the buffer when it is full.
         if (m_pos > 1 && m_buf[m_pos - 1] == ',') m_pos--;
-        if (m_pos < m_size) {
-            m_buf[m_pos] = '}';
-            m_buf[m_pos + 1] = '\0';
-        }
+        if (m_pos + 2 > m_size) m_pos = m_size - 2;
+        m_buf[m_pos] = '}';
+        m_buf[m_pos + 1] = '\0';
     }
 
     const char* c_str() const noexcept { return m_buf; }

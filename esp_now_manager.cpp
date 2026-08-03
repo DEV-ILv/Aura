@@ -17,7 +17,6 @@ EspNowManager::EspNowManager() noexcept
     , m_discoveryStartTime(0) {
     m_mutex = portMUX_INITIALIZER_UNLOCKED;
     memset(m_encryptionKey, 0, ESPNOW_ENCRYPT_KEY_SIZE);
-    m_nodes.reserve(ESPNOW_MAX_NODES);
     s_instance = this;
 }
 
@@ -41,7 +40,10 @@ bool EspNowManager::initialize() noexcept {
     esp_now_register_send_cb(espNowSendCb);
     esp_now_register_recv_cb(espNowRecvCb);
 
-    esp_now_set_pmk((const uint8_t*)"AURA_ESPNOW_KEY");
+    // Set the strong shared primary master key. ESP-NOW derives the per-peer
+    // default LMK from this key, so all nodes running the same firmware can
+    // exchange encrypted frames. A zeroed LMK tells the driver to derive it.
+    esp_now_set_pmk(const_cast<uint8_t*>(kPrimaryMasterKey));
 
     m_initialized = true;
     Logger::info(kLogCategory, "ESP-NOW initialized (channel %d)", ESPNOW_CHANNEL);
@@ -105,7 +107,7 @@ bool EspNowManager::pairNode(const uint8_t* mac, EspNowNodeType type) noexcept {
     memset(&peerInfo, 0, sizeof(peerInfo));
     memcpy(peerInfo.peer_addr, mac, 6);
     peerInfo.channel = ESPNOW_CHANNEL;
-    peerInfo.encrypt = false;
+    peerInfo.encrypt = true;   // encrypted link; LMK derived from PMK
     peerInfo.ifidx = WIFI_IF_AP;
 
     esp_err_t result = esp_now_add_peer(&peerInfo);
@@ -119,6 +121,7 @@ bool EspNowManager::pairNode(const uint8_t* mac, EspNowNodeType type) noexcept {
     if (node) {
         node->state = EspNowNodeState::PAIRED;
         node->lastSeen = millis();
+        node->encrypted = true;
     }
 
     return true;
@@ -256,6 +259,10 @@ void EspNowManager::handleReceivedMessage(const uint8_t* srcMac, const uint8_t* 
     EspNowMessage msg;
     memcpy(&msg, data, sizeof(EspNowMessage));
 
+    // Privileged message types (text, commands, OTA) are only accepted from
+    // paired nodes. Discovery/pairing handshakes remain open so new devices
+    // can join, but they cannot inject commands or firmware updates.
+    bool isPaired = findNode(srcMac) && findNode(srcMac)->state == EspNowNodeState::PAIRED;
     switch (static_cast<EspNowMessageType>(msg.type)) {
         case EspNowMessageType::HEARTBEAT:
             handleHeartbeat(srcMac, msg);
@@ -271,10 +278,16 @@ void EspNowManager::handleReceivedMessage(const uint8_t* srcMac, const uint8_t* 
             break;
         case EspNowMessageType::TEXT:
         case EspNowMessageType::COMMAND:
-            handleTextMessage(srcMac, msg);
-            break;
+        case EspNowMessageType::OTA_REQUEST:
         case EspNowMessageType::OTA_CHUNK:
-            handleOTAChunk(srcMac, msg);
+        case EspNowMessageType::OTA_COMPLETE:
+        case EspNowMessageType::AUDIO_STREAM:
+            if (isPaired) {
+                handleTextMessage(srcMac, msg);
+            } else {
+                Logger::warning(kLogCategory, "Rejected message type %d from unpaired node",
+                                static_cast<int>(msg.type));
+            }
             break;
         default:
             break;
@@ -357,12 +370,14 @@ void EspNowManager::handlePairAccept(const uint8_t* srcMac, const EspNowMessage&
         node->state = EspNowNodeState::PAIRED;
         node->type = acceptedType;
         node->lastSeen = millis();
+        node->encrypted = true;
     }
 
     esp_now_peer_info_t peerInfo;
     memset(&peerInfo, 0, sizeof(peerInfo));
     memcpy(peerInfo.peer_addr, srcMac, 6);
     peerInfo.channel = ESPNOW_CHANNEL;
+    peerInfo.encrypt = true;   // encrypted link; LMK derived from PMK
     peerInfo.ifidx = WIFI_IF_AP;
     esp_now_add_peer(&peerInfo);
 

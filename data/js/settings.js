@@ -4,6 +4,10 @@ AURA.pages.settings = function() {
   var wi = AURA.state.wifi;
   var se = AURA.state.settings;
 
+  var pwdBtn = AURA.session && AURA.session.mustChange
+    ? '<button class="btn btn-primary btn-sm" onclick="AURA.auth.openChangePassword(true)">Set New Password</button>'
+    : '<button class="btn btn-primary btn-sm" onclick="AURA.auth.openChangePassword(false)">Change Password</button>';
+
   AURA.components.render(
     '<div class="page" id="page-settings">' +
     '<div class="page-h1">Settings</div>' +
@@ -21,6 +25,12 @@ AURA.pages.settings = function() {
     '<div class="frm-grp"><label for="s-name">Device Name</label><input type="text" id="s-name" name="device_name" placeholder="AURA" value="' + (se ? se.device_name : 'AURA') + '"></div>' +
     '<div class="btn-group"><button type="submit" class="btn btn-primary btn-sm">Save Settings</button></div>' +
     '</div></div></form>' +
+    '<div class="sect"><div class="sect-h">Security</div>' +
+    '<div class="crd">' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">Manage the admin password used to sign in to this web portal.</p>' +
+    '<div class="btn-group">' + pwdBtn +
+    '<button class="btn btn-ghost btn-sm" onclick="AURA.auth.logout()">Sign Out</button>' +
+    '</div></div></div>' +
     '<div class="sect"><div class="sect-h">About</div>' +
     '<div class="crd" style="display:flex;flex-direction:column;gap:8px">' +
     '<div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--text-secondary)">Version</span><span style="font-family:var(--font-mono)">v' + (se ? se.version : '--') + '</span></div>' +
@@ -42,8 +52,11 @@ AURA.pages.settings = function() {
 AURA.saveWifi = function(e) {
   e.preventDefault();
   var fd = new FormData(e.target);
-  AURA.api.saveWifiForm(fd).then(function(j) {
-    AURA.components.toast(j.message || 'Wi-Fi saved', 'success');
+  AURA.api.saveWifiForm(fd).then(function(res) {
+    AURA.components.toast(
+      (res.data && res.data.message) || (res.data && res.data.error) || 'Wi-Fi saved',
+      res.ok ? 'success' : 'error'
+    );
   }).catch(function() {
     AURA.components.toast('Failed to save Wi-Fi', 'error');
   });
@@ -52,8 +65,11 @@ AURA.saveWifi = function(e) {
 AURA.saveSettings = function(e) {
   e.preventDefault();
   var fd = new FormData(e.target);
-  AURA.api.saveSettingsForm(fd).then(function(j) {
-    AURA.components.toast(j.message || 'Settings saved', 'success');
+  AURA.api.saveSettingsForm(fd).then(function(res) {
+    AURA.components.toast(
+      (res.data && res.data.message) || (res.data && res.data.error) || 'Settings saved',
+      res.ok ? 'success' : 'error'
+    );
   }).catch(function() {
     AURA.components.toast('Failed to save settings', 'error');
   });
@@ -61,14 +77,14 @@ AURA.saveSettings = function(e) {
 
 AURA.restartDevice = function() {
   AURA.components.toast('Restarting...', 'info');
-  AURA.api.restart().then(function(d) {
-    AURA.components.toast(d.message || 'Restarting...', 'info');
+  AURA.api.restart().then(function(res) {
+    AURA.components.toast((res.data && res.data.message) || 'Restarting...', 'info');
   });
 };
 
 AURA.factoryResetDevice = function() {
   if (!confirm('This will erase ALL settings and reset the device. Continue?')) return;
-  AURA.api.factoryReset().then(function(d) {
-    AURA.components.toast(d.message || 'Factory reset...', 'error');
+  AURA.api.factoryReset().then(function(res) {
+    AURA.components.toast((res.data && res.data.message) || 'Factory reset...', 'error');
   });
 };

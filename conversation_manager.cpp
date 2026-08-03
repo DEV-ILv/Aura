@@ -63,8 +63,6 @@ ConversationManager::ConversationManager() noexcept
     , m_sttTriggered(false)
     , m_geminiTriggered(false)
     , m_ttsTriggered(false) {
-    m_history.reserve(kMaxHistoryEntries);
-    m_wakeWordPhrases.reserve(WAKE_WORD_PHRASES_MAX);
 }
 
 ConversationManager::~ConversationManager() noexcept = default;

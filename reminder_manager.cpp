@@ -162,10 +162,6 @@ bool ReminderManager::initialize() noexcept {
 
     Logger::info(kLogCategory, "Initializing reminder manager");
 
-    // Reserve capacity to avoid heap fragmentation
-    m_reminders.reserve(kMaxReminders);
-    m_history.reserve(kMaxHistoryEntries);
-
     m_initialized = true;
 
     // Load existing reminders

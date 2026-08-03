@@ -5,7 +5,6 @@ PersonalityManager personalityManager;
 
 PersonalityManager::PersonalityManager() noexcept
     : m_initialized(false), m_dirty(false), m_activeProfileIndex(0) {
-    m_profiles.reserve(kMaxProfiles);
 }
 
 PersonalityManager::~PersonalityManager() noexcept {

@@ -7,7 +7,6 @@ VaultManager vaultManager;
 
 VaultManager::VaultManager() noexcept
     : m_initialized(false), m_dirty(false), m_lastIdCounter(0) {
-    m_entries.reserve(kMaxEntries);
 }
 
 VaultManager::~VaultManager() noexcept {

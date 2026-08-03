@@ -9,19 +9,32 @@
 //
 // ECDSA P-256 (secp256r1) public key in DER SubjectPublicKeyInfo format.
 //
-// To generate a real keypair:
-//   python tools/generate_keypair.py --out-dir ./keys
-// Then replace kFirmwareSigningKey[] below with keys/public.h contents.
+// To regenerate a keypair:
+//   Windows: powershell -File tools/generate_keypair.ps1
+//   macOS/Linux: python tools/generate_keypair.py --out-dir ./keys
+// Then copy keys/public.h contents over this file.
 //
-// IMPORTANT: Keep private.pem SECURE — never commit it to version control.
+// IMPORTANT: Keep the matching private key SECURE — never commit it.
+// The keys/ directory is git-ignored.
+//
+// Sign firmware binaries with tools/firmware_signer.{py,ps1}; the OTA server
+// must return the hex DER signature in its check response as "signature".
 // ======================================================================
 
-// Default: empty key (signature verification disabled).
-// Replace with a 91-byte DER SPKI block from generate_keypair.py.
-static constexpr uint8_t kFirmwareSigningKey[] = { 0x00 };
-static constexpr size_t kFirmwareSigningKeyLen = 0;
+static constexpr uint8_t kFirmwareSigningKey[] = {
+    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+    0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03,
+    0x42, 0x00, 0x04, 0x50, 0xea, 0x3b, 0x00, 0x3e, 0x5f, 0xdf, 0x46, 0xc1,
+    0xc8, 0xc7, 0x4d, 0xda, 0x49, 0xb0, 0x0a, 0x51, 0xc9, 0x8f, 0x57, 0xbf,
+    0x1d, 0x4a, 0x8d, 0x51, 0x6a, 0xc0, 0xfe, 0x1e, 0x44, 0x49, 0x92, 0x6a,
+    0xae, 0xc0, 0xc2, 0xe3, 0x9d, 0x9d, 0xc1, 0x20, 0xc5, 0x51, 0x38, 0x23,
+    0x47, 0xef, 0x55, 0xfa, 0xbd, 0x31, 0x52, 0x99, 0xfe, 0xb6, 0xe9, 0x98,
+    0xbf, 0x21, 0x48, 0x38, 0x70, 0x2f, 0xfd
+};
+static constexpr size_t kFirmwareSigningKeyLen = sizeof(kFirmwareSigningKey);
 
-// ECDSA P-256 signature: 64-byte compact (r || s)
+// ECDSA P-256 signature delivered by the OTA server is DER-encoded
+// (ASN.1 SEQUENCE of INTEGER r, s) so it can be parsed by mbedtls_pk_verify().
 static constexpr size_t kSignatureLen = 64;
 
 #endif // AURA_FIRMWARE_KEYS_H
