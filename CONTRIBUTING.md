@@ -46,6 +46,22 @@ cd Aura_v1
    The tool writes `keys/` (git-ignored). Copy `keys/public.h` content into
    `firmware_keys.h`.
 
+### Build modes (development vs production)
+
+`AURA_DEVELOPMENT_MODE` selects credential behaviour:
+
+- **`0` — production (default):** the device generates a strong random admin
+  password on first boot and stores it in NVS; the setup-AP password is
+  MAC-derived. Committed sources default to `0`.
+- **`1` — development (local testing only):** well-known credentials
+  (`Devil` / `Devil`, setup AP `AURA_Setup` / `DevilDevil`) are used for
+  convenience. Enable it in your git-ignored `secrets.h`:
+  ```cpp
+  #define AURA_DEVELOPMENT_MODE 1
+  ```
+
+Never merge a build that has `AURA_DEVELOPMENT_MODE = 1`.
+
 ### Companion app
 
 ```bash

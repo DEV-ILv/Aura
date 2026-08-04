@@ -5,6 +5,36 @@
 #include "secrets.h"
 #include "version.h"
 
+// ===========================================================================
+// BUILD MODE - development vs production credentials
+// ===========================================================================
+// AURA_DEVELOPMENT_MODE selects how credentials are provisioned:
+//
+//   0 (default / production):
+//       - a strong random admin password is generated on first boot, stored in
+//         NVS, and printed to the Serial monitor (never hardcoded).
+//       - the setup AP password is derived from the device MAC when unset.
+//
+//   1 (development - LOCAL TESTING ONLY):
+//       - well-known development credentials are used for convenience:
+//             Web Portal login : Devil / Devil
+//             Setup AP (AURA_Setup) : DevilDevil
+//       - NEVER ship or publish a development build.
+//
+// The git-ignored secrets.h (included above) may override this default, so a
+// local developer build can enable the mode without touching committed files.
+// ===========================================================================
+#ifndef AURA_DEVELOPMENT_MODE
+#define AURA_DEVELOPMENT_MODE 0
+#endif
+
+#if AURA_DEVELOPMENT_MODE
+// Well-known DEVELOPMENT credentials - compiled in ONLY for dev builds.
+#define AURA_DEV_WEB_USERNAME "Devil"
+#define AURA_DEV_WEB_PASSWORD "Devil"
+#define AURA_DEV_AP_PASSWORD  "DevilDevil"
+#endif
+
 //======================================================
 // AURA AI Desktop Assistant
 // Hardware Configuration

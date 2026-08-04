@@ -655,8 +655,12 @@ bool SystemManager::initializeModules() noexcept {
             const char* apPassword = Secrets::AP_PASSWORD;
             String generatedPwd;
             if (apPassword[0] == '\0') {
+#if AURA_DEVELOPMENT_MODE
+                apPassword = AURA_DEV_AP_PASSWORD;  // AURA_Setup / DevilDevil (dev only)
+#else
                 generatedPwd = generateDefaultPassword();
                 apPassword = generatedPwd.c_str();
+#endif
             }
             wifiManager.startAccessPoint(Secrets::AP_SSID, apPassword);
         }

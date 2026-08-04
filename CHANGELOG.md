@@ -14,6 +14,14 @@ security review.
 
 ### Added
 
+- **Development / production build modes** — new `AURA_DEVELOPMENT_MODE`
+  compile-time flag (defaults to `0`/production). Production keeps the random
+  first-boot admin password + MAC-derived AP password. Development mode
+  (`1`, local testing only) restores the well-known development credentials:
+  Web Portal / REST `Devil` / `Devil`, setup AP `AURA_Setup` / `DevilDevil`.
+  The flag is enabled via the git-ignored `secrets.h`; the companion prefill is
+  behind `--dart-define=AURA_DEVELOPMENT_MODE=true`.
+
 - **First-boot admin credentials (C4)** — no more hardcoded `Devil`/`DevilDevil`
   defaults in `secrets.h`. On first boot the device generates a strong random
   32-hex-char admin password (`esp_random()`), stores it in NVS, and prints it to

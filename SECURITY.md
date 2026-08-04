@@ -59,8 +59,8 @@ request anonymity) once a fix is released.
 
 ### First-boot credentials
 
-- `secrets.h` contains **no default password**. On first boot the firmware
-  generates a strong random 32-hex-character admin password
+- `secrets.h` contains **no default password** in production builds. On first
+  boot the firmware generates a strong random 32-hex-character admin password
   (`esp_random()`), stores it in the `auraauth` NVS namespace, and prints it to
   the Serial monitor.
 - The login is flagged `must_change = true` until the password is replaced via
@@ -68,6 +68,25 @@ request anonymity) once a fix is released.
   required).
 - Existing user credentials are preserved across NVS layout migrations
   (`kAuthCredVersion = 3`); they are never reset to defaults.
+
+### Development mode (local testing only)
+
+A compile-time flag `AURA_DEVELOPMENT_MODE` selects credential behaviour:
+
+- **`0` — production (default).** Random first-boot admin password, MAC-derived
+  setup-AP password. No known credentials exist anywhere in the source tree.
+- **`1` — development.** Well-known development credentials are used for local
+  testing convenience:
+  - Web Portal / REST: `Devil` / `Devil`
+  - Setup AP (`AURA_Setup`): `DevilDevil`
+
+The flag defaults to `0` in committed sources. Enable it locally by setting
+`#define AURA_DEVELOPMENT_MODE 1` in the git-ignored `secrets.h` (or
+`config.h`), and build the companion with
+`--dart-define=AURA_DEVELOPMENT_MODE=true` to prefill the same credentials.
+**A development build must never be shipped or published.** All authentication,
+token validation, rate limiting, OTA verification, and WebSocket protection
+remain active in both modes.
 
 ### REST API
 
@@ -178,6 +197,9 @@ verification, rotation, and CI workflows.
 
 1. Change the admin password immediately after first login (the device forces
    this on first boot).
+2. Never ship a development build: ensure `AURA_DEVELOPMENT_MODE` is `0`
+   (production) before any release, and verify with the build-mode banner
+   printed to Serial on boot.
 2. Keep the firmware signing private key offline and rotate it if it may have
    leaked.
 3. Use unique, strong Wi-Fi and admin passwords; never reuse `secrets.h`

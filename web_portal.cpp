@@ -2143,9 +2143,27 @@ bool WebPortal::loadAuthCredentials() noexcept {
     m_authPrefs.end();
 
     // FIRST BOOT: there is no configured password and no prior credential
-    // record. Generate a strong random admin password, persist it in NVS, and
-    // print it to the Serial monitor. There is NO known default password.
+    // record. In production a strong random admin password is generated,
+    // persisted in NVS, and printed to the Serial monitor (no known default).
+    // In development builds the well-known development credentials are used
+    // for local testing only.
     if (m_authPassword.isEmpty() && storedVersion == 0) {
+#if AURA_DEVELOPMENT_MODE
+        m_authPassword = AURA_DEV_WEB_PASSWORD;
+        m_authMustChange = false;
+        saveAuthCredentials(m_authUsername, m_authPassword);
+
+        Serial.println();
+        Serial.println("======================================================");
+        Serial.println("  AURA DEVELOPMENT-MODE ADMIN CREDENTIALS");
+        Serial.print("    Username: "); Serial.println(m_authUsername);
+        Serial.print("    Password: "); Serial.println(m_authPassword);
+        Serial.println("  (AURA_DEVELOPMENT_MODE is ON - do NOT ship this build!)");
+        Serial.println("======================================================");
+        Serial.println();
+        Logger::warning("WebPortal", "Dev-mode admin credentials applied (for local testing only)");
+        return true;
+#else
         m_authPassword = generateRandomPassword();
         m_authMustChange = true;
         saveAuthCredentials(m_authUsername, m_authPassword);
@@ -2160,6 +2178,7 @@ bool WebPortal::loadAuthCredentials() noexcept {
         Serial.println();
         Logger::warning("WebPortal", "Generated first-boot admin credentials (see Serial)");
         return true;
+#endif
     }
 
     // Version migration: NEVER reset user credentials to defaults. Only persist
@@ -2173,8 +2192,13 @@ bool WebPortal::loadAuthCredentials() noexcept {
 
     // Safety net for exotic states: never boot with an empty password.
     if (m_authPassword.isEmpty()) {
+#if AURA_DEVELOPMENT_MODE
+        m_authPassword = AURA_DEV_WEB_PASSWORD;
+        m_authMustChange = false;
+#else
         m_authPassword = generateRandomPassword();
         m_authMustChange = true;
+#endif
         saveAuthCredentials(m_authUsername, m_authPassword);
         Logger::warning("WebPortal", "Regenerated empty admin password (see Serial)");
         Serial.print("AURA admin password: "); Serial.println(m_authPassword);

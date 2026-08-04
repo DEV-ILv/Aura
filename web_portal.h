@@ -627,7 +627,11 @@ private:
     static constexpr unsigned long kSessionTimeoutMs{3600000UL};  // 1 hour
     static constexpr const char* kAuthNamespace{"auraauth"};
     static constexpr uint32_t kAuthCredVersion{3};  // bump to re-migrate auth NVS layout
+#if AURA_DEVELOPMENT_MODE
+    static constexpr const char* kDefaultUsername{AURA_DEV_WEB_USERNAME};
+#else
     static constexpr const char* kDefaultUsername{Secrets::WEB_USERNAME};
+#endif
 
     // Per-IP login rate limiting
     struct LoginTracker {
