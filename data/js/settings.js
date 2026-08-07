@@ -25,6 +25,15 @@ AURA.pages.settings = function() {
     '<div class="frm-grp"><label for="s-name">Device Name</label><input type="text" id="s-name" name="device_name" placeholder="AURA" value="' + (se ? se.device_name : 'AURA') + '"></div>' +
     '<div class="btn-group"><button type="submit" class="btn btn-primary btn-sm">Save Settings</button></div>' +
     '</div></div></form>' +
+    '<form id="output-form" onsubmit="AURA.saveOutputSettings(event)">' +
+    '<div class="sect"><div class="sect-h">Output</div>' +
+    '<div class="crd">' +
+    '<label style="display:flex;align-items:center;gap:10px;margin:10px 0;font-size:14px;cursor:pointer"><input type="checkbox" id="s-oled" name="output_oled" ' + (se && se.output_oled ? 'checked' : '') + '><span>OLED Display</span></label>' +
+    '<label style="display:flex;align-items:center;gap:10px;margin:10px 0;font-size:14px;cursor:pointer"><input type="checkbox" id="s-speaker" name="output_speaker" ' + (se && se.output_speaker ? 'checked' : '') + '><span>Speaker</span></label>' +
+    '<label style="display:flex;align-items:center;gap:10px;margin:10px 0;font-size:14px;cursor:pointer"><input type="checkbox" id="s-companion" name="output_companion" ' + (se && se.output_companion ? 'checked' : '') + '><span>Companion App</span></label>' +
+    '<label style="display:flex;align-items:center;gap:10px;margin:10px 0;font-size:14px;cursor:not-allowed;opacity:0.5"><input type="checkbox" disabled><span>Push Notifications (future)</span></label>' +
+    '<div class="btn-group"><button type="submit" class="btn btn-primary btn-sm">Save Output Settings</button></div>' +
+    '</div></div></form>' +
     '<div class="sect"><div class="sect-h">Security</div>' +
     '<div class="crd">' +
     '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">Manage the admin password used to sign in to this web portal.</p>' +
@@ -72,6 +81,22 @@ AURA.saveSettings = function(e) {
     );
   }).catch(function() {
     AURA.components.toast('Failed to save settings', 'error');
+  });
+};
+
+AURA.saveOutputSettings = function(e) {
+  e.preventDefault();
+  AURA.api.postJSON('/api/settings', {
+    output_oled: !!document.getElementById('s-oled').checked,
+    output_speaker: !!document.getElementById('s-speaker').checked,
+    output_companion: !!document.getElementById('s-companion').checked
+  }).then(function(res) {
+    AURA.components.toast(
+      (res.data && res.data.message) || (res.data && res.data.error) || 'Output settings saved',
+      res.ok ? 'success' : 'error'
+    );
+  }).catch(function() {
+    AURA.components.toast('Failed to save output settings', 'error');
   });
 };
 

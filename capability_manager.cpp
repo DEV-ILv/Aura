@@ -214,7 +214,7 @@ void CapabilityManager::DetectSensors() noexcept {
     Register(Capability::INPUT_ROTARY_ENCODER, false);
     Register(Capability::INPUT_KEYBOARD, false);
     Register(Capability::INPUT_MOUSE, false);
-    Register(Capability::INPUT_VOICE, true, "INMP441 Mic + Google STT");
+    Register(Capability::INPUT_VOICE, true, "INMP441 Mic + Cloud STT");
     Register(Capability::INPUT_GESTURE, false);
 }
 

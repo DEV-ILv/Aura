@@ -45,7 +45,12 @@ DisplayManager::DisplayManager() noexcept
     , m_homeMemories(0)
     , m_homeReminders(0)
     , m_micMuted(true)
+    , m_micStatus(MicStatus::IDLE)
+    , m_lastMicStatus(MicStatus::IDLE)
+    , m_lastMicIconTime(0)
+    , m_micIconPhase(0)
     , m_dashboardDirty(true)
+    , m_dashboardUntil(0)
     , m_lastDashboardRefresh(0) {
     for (auto& line : m_cachedGreetingLines) {
         line = String();
@@ -63,18 +68,21 @@ bool DisplayManager::initialize() noexcept {
 
     Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
 
-    if (!m_display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
-        LOG_ERROR("DisplayManager", "SSD1306 initialization failed");
+    if (!m_display.begin(OLED_ADDRESS)) {
+        LOG_ERROR("DisplayManager", "SH1106 initialization failed");
         return false;
     }
 
     m_display.clearDisplay();
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setTextWrap(false);
     m_display.cp437(true);
 
     // Mark initialized before calling setter functions
 m_initialized = true;
+
+    m_face.setDisplay(&m_display);
+    m_face.reset();
 
     setBrightness(m_brightness);
     setContrast(m_contrast);
@@ -105,6 +113,14 @@ void DisplayManager::update() noexcept {
     updateAnimation();
     updateScreenTimeout();
 
+    // Face-first UX: informational/on-demand screens return to the presence.
+    if (m_currentState == DisplayState::HOME && m_dashboardUntil != 0 && now >= m_dashboardUntil && !m_statusPinned) {
+        changeState(DisplayState::FACE);
+    } else if ((m_currentState == DisplayState::NOTIFICATION || m_currentState == DisplayState::REMINDER)
+               && (now - m_stateStartTime >= m_infoReturnMs)) {
+        changeState(DisplayState::FACE);
+    }
+
     if (m_transitionActive) {
         renderTransition();
         m_lastRefreshTime = now;
@@ -112,6 +128,17 @@ void DisplayManager::update() noexcept {
     }
 
     bool forceHomeRedraw = (m_currentState == DisplayState::HOME && m_dashboardDirty);
+
+    // Advance the mic-icon animation clock independently of the base refresh
+    // so the top-right icon stays alive without a full-screen redraw.
+    bool micIconTick = false;
+    if (isMicIconAnimated()) {
+        if (now - m_lastMicIconTime >= mMicIconIntervalMs) {
+            m_lastMicIconTime = now;
+            ++m_micIconPhase;
+            micIconTick = true;
+        }
+    }
 
     if (m_screenDirty || forceHomeRedraw || (now - m_lastRefreshTime >= m_refreshIntervalMs)) {
         if (m_currentState != m_lastRenderedState || m_screenDirty || forceHomeRedraw) {
@@ -152,12 +179,21 @@ void DisplayManager::update() noexcept {
                 case DisplayState::STARTUP_GREETING:
                     renderStartupGreeting();
                     break;
+                case DisplayState::FACE:
+                    renderFace();
+                    break;
             }
             m_lastRenderedState = m_currentState;
             m_screenDirty = false;
         }
+        // Overlay the persistent mic-status icon (region-only repaint).
+        renderMicIcon();
         m_display.display();
         m_lastRefreshTime = now;
+    } else if (micIconTick) {
+        // Icon-only animation tick: repaint just the top-right corner.
+        renderMicIcon();
+        m_display.display();
     }
 }
 
@@ -234,26 +270,58 @@ void DisplayManager::showBoot(uint8_t progress) noexcept {
 }
 
 void DisplayManager::showHome() noexcept {
+    showFace();
+}
+
+void DisplayManager::showFace() noexcept {
+    if (!m_initialized) return;
+    m_face.setExpression(FaceExpression::IDLE);
+    changeState(DisplayState::FACE);
+    m_screenDirty = true;
+}
+
+void DisplayManager::showFaceExpression(const FaceExpression expr) noexcept {
+    if (!m_initialized) return;
+    m_face.setExpression(expr);
+    changeState(DisplayState::FACE);
+    m_screenDirty = true;
+}
+
+void DisplayManager::showDashboard() noexcept {
     if (!m_initialized) return;
     changeState(DisplayState::HOME);
+    m_dashboardUntil = millis() + m_dashboardReturnMs;
+    m_screenDirty = true;
+}
+
+bool DisplayManager::isDashboardActive() const noexcept {
+    return m_currentState == DisplayState::HOME;
+}
+
+void DisplayManager::faceNotify(FaceEvent event) noexcept {
+    if (!m_initialized) return;
+    m_face.notify(event);
     m_screenDirty = true;
 }
 
 void DisplayManager::showListening() noexcept {
     if (!m_initialized) return;
-    changeState(DisplayState::LISTENING);
+    m_face.setExpression(FaceExpression::LISTENING);
+    changeState(DisplayState::FACE);
     m_screenDirty = true;
 }
 
 void DisplayManager::showThinking() noexcept {
     if (!m_initialized) return;
-    changeState(DisplayState::THINKING);
+    m_face.setExpression(FaceExpression::THINKING);
+    changeState(DisplayState::FACE);
     m_screenDirty = true;
 }
 
 void DisplayManager::showSpeaking() noexcept {
     if (!m_initialized) return;
-    changeState(DisplayState::SPEAKING);
+    m_face.setExpression(FaceExpression::SPEAKING);
+    changeState(DisplayState::FACE);
     m_screenDirty = true;
 }
 
@@ -296,7 +364,11 @@ void DisplayManager::showWifiStatus(bool connected, const String& ssid, int32_t 
     m_cachedWifiConnected = connected;
     m_cachedSSID = ssid;
     m_cachedSignal = signal;
-    changeState(DisplayState::HOME);
+    m_face.setExpression(FaceExpression::IDLE);
+    if (connected) {
+        m_face.notify(FaceEvent::WIFI_CONNECTED);
+    }
+    changeState(DisplayState::FACE);
     m_screenDirty = true;
 }
 
@@ -305,7 +377,11 @@ void DisplayManager::showStorageStatus(const String& storageType, uint32_t usedM
     m_cachedStorageType = storageType;
     m_cachedUsedMB = usedMB;
     m_cachedTotalMB = totalMB;
-    changeState(DisplayState::HOME);
+    m_face.setExpression(FaceExpression::IDLE);
+    if (usedMB > 0 || totalMB > 0) {
+        m_face.notify(FaceEvent::STORAGE);
+    }
+    changeState(DisplayState::FACE);
     m_screenDirty = true;
 }
 
@@ -322,7 +398,16 @@ void DisplayManager::showMessage(const String& title, const String& body, const 
     m_cachedMessage = body;
     m_cachedFooter = footer;
     changeState(DisplayState::HOME);
+    m_dashboardUntil = millis() + m_infoReturnMs;
     m_screenDirty = true;
+}
+
+void DisplayManager::pinStatus() noexcept {
+    m_statusPinned = true;
+}
+
+void DisplayManager::unpinStatus() noexcept {
+    m_statusPinned = false;
 }
 
 void DisplayManager::showStartupGreeting(const String lines[], uint8_t count) noexcept {
@@ -339,8 +424,8 @@ void DisplayManager::showStartupGreeting(const String lines[], uint8_t count) no
 void DisplayManager::setBrightness(uint8_t brightness) noexcept {
     if (!m_initialized) return;
     m_brightness = brightness;
-    m_display.ssd1306_command(SSD1306_SETCONTRAST);
-    m_display.ssd1306_command(brightness);
+    m_display.oled_command(SH110X_SETCONTRAST);
+    m_display.oled_command(brightness);
     LOG_DEBUG("DisplayManager", "Brightness set to %d", brightness);
 }
 
@@ -349,14 +434,14 @@ void DisplayManager::sleep() noexcept {
     m_sleeping = true;
     m_display.clearDisplay();
     m_display.display();
-    m_display.ssd1306_command(SSD1306_DISPLAYOFF);
+    m_display.oled_command(SH110X_DISPLAYOFF);
     LOG_INFO("DisplayManager", "Display sleep");
 }
 
 void DisplayManager::wake() noexcept {
     if (!m_initialized || !m_sleeping) return;
     m_sleeping = false;
-    m_display.ssd1306_command(SSD1306_DISPLAYON);
+    m_display.oled_command(SH110X_DISPLAYON);
     m_screenDirty = true;
     m_lastActivityTime = millis();
     LOG_INFO("DisplayManager", "Display wake");
@@ -364,12 +449,12 @@ void DisplayManager::wake() noexcept {
 
 void DisplayManager::displayOn() noexcept {
     if (!m_initialized) return;
-    m_display.ssd1306_command(SSD1306_DISPLAYON);
+    m_display.oled_command(SH110X_DISPLAYON);
 }
 
 void DisplayManager::displayOff() noexcept {
     if (!m_initialized) return;
-    m_display.ssd1306_command(SSD1306_DISPLAYOFF);
+    m_display.oled_command(SH110X_DISPLAYOFF);
 }
 
 void DisplayManager::setNightMode(bool enabled) noexcept {
@@ -415,15 +500,15 @@ void DisplayManager::setRotation(uint8_t rotation) noexcept {
 void DisplayManager::setContrast(uint8_t contrast) noexcept {
     if (!m_initialized) return;
     m_contrast = contrast;
-    m_display.ssd1306_command(SSD1306_SETCONTRAST);
-    m_display.ssd1306_command(contrast);
+    m_display.oled_command(SH110X_SETCONTRAST);
+    m_display.oled_command(contrast);
     LOG_DEBUG("DisplayManager", "Contrast set to %d", contrast);
 }
 
 void DisplayManager::setInverted(bool inverted) noexcept {
     if (!m_initialized) return;
     m_inverted = inverted;
-    m_display.ssd1306_command(inverted ? SSD1306_INVERTDISPLAY : SSD1306_NORMALDISPLAY);
+    m_display.oled_command(inverted ? SH110X_INVERTDISPLAY : SH110X_NORMALDISPLAY);
     LOG_DEBUG("DisplayManager", "Inverted set to %s", inverted ? "true" : "false");
 }
 
@@ -437,6 +522,10 @@ uint16_t DisplayManager::getHeight() const noexcept {
 
 void DisplayManager::changeState(DisplayState newState) noexcept {
     if (m_currentState == newState) return;
+
+    if (m_sleeping && newState != DisplayState::SLEEP) {
+        wake();
+    }
 
     m_previousState = m_currentState;
     m_currentState = newState;
@@ -474,9 +563,9 @@ void DisplayManager::renderTransition() noexcept {
     const uint8_t ringRadius = static_cast<uint8_t>((static_cast<uint16_t>(progress) * maxRadius) / 255);
     // Expanding double-ring wipe
     if (ringRadius > 2) {
-        m_display.drawCircle(cx, cy, ringRadius, SSD1306_WHITE);
+        m_display.drawCircle(cx, cy, ringRadius, SH110X_WHITE);
         if (ringRadius > 6) {
-            m_display.drawCircle(cx, cy, ringRadius - 3, SSD1306_WHITE);
+            m_display.drawCircle(cx, cy, ringRadius - 3, SH110X_WHITE);
         }
     }
     m_display.display();
@@ -491,39 +580,51 @@ void DisplayManager::renderTransition() noexcept {
 void DisplayManager::renderBoot(uint8_t progress) noexcept {
     m_display.clearDisplay();
 
+    const unsigned long now = millis();
+    const unsigned long t = now - m_stateStartTime;
     const uint8_t frame = m_animationFrame;
-    const float pulse = 1.0f + 0.05f * sinf((float)(frame % 64) * 3.14159f / 32.0f);
-    const uint8_t titleSize = (uint8_t)(2.5f * pulse);
 
-    drawCenteredText("AURA", (uint8_t)(4 * pulse), 2);
-
-    char markLine[16];
-    snprintf(markLine, sizeof(markLine), "MARK %s", AURA_MARK_ROMAN);
-    drawCenteredText(markLine, 20, 1);
-
-    drawCenteredText(aura::version::kCodename, 30, 1);
-
-    char verLine[20];
-    snprintf(verLine, sizeof(verLine), "v%s", aura::version::kSemVer);
-    drawCenteredText(verLine, 40, 1);
-
-    drawProgressBar(14, 48, 100, 8, progress);
-    if (progress > 0 && progress < 100) {
-        const uint8_t scanX = 14 + (frame % 100) * 100 / 100;
-        m_display.drawLine(scanX, 48, scanX, 56, SSD1306_WHITE);
+    // ---- Phase 0-1: fade in + minimal wordmark/ring logo --------------------
+    const float fade = (t < 700UL) ? (float)t / 700.0f : 1.0f;
+    if (t < 900UL) {
+        setBrightness((uint8_t)((float)m_brightness * fade));
     }
 
-    char pctStr[6];
-    snprintf(pctStr, sizeof(pctStr), "%d%%", progress);
-    drawCenteredText(pctStr, 58, 1);
-
-    uint8_t dots = (frame / 4) % 4;
-    char loadingStr[16];
-    snprintf(loadingStr, sizeof(loadingStr), "INITIALIZING");
-    for (uint8_t i = 0; i < dots; ++i) {
-        uint8_t dotX = 64 + 24 + i * 6;
-        m_display.fillCircle(dotX, 58, 1, SSD1306_WHITE);
+    if (t < 1600UL) {
+        const float lp = 1.0f + 0.06f * sinf((float)(frame % 96) * 6.28318f / 96.0f);
+        m_display.drawCircle(64, 25, (uint8_t)(10.0f * lp), SH110X_WHITE);
+        drawCenteredText("AURA", 38, 2);
     }
+
+    // ---- Phase 2: eyes reveal ------------------------------------------------
+    float eyeOpen = 0.0f;
+    if (t >= 800UL) {
+        eyeOpen = (float)(t - 800UL) / 1100.0f;
+        if (eyeOpen > 1.0f) eyeOpen = 1.0f;
+    }
+    const int16_t cy = 30;
+    const uint8_t ry = (uint8_t)((float)9 * eyeOpen);
+    if (ry > 1) {
+        m_display.fillEllipse(42, cy, 8, ry, SH110X_WHITE);
+        m_display.fillEllipse(86, cy, 8, ry, SH110X_WHITE);
+        if (ry > 3) {
+            m_display.fillCircle(42, cy, 2, SH110X_BLACK);
+            m_display.fillCircle(86, cy, 2, SH110X_BLACK);
+        }
+    } else if (eyeOpen > 0.0f) {
+        m_display.drawFastHLine(34, cy, 16, SH110X_WHITE);
+        m_display.drawFastHLine(78, cy, 16, SH110X_WHITE);
+    }
+
+    // ---- progress + READY ------------------------------------------------------
+    drawProgressBar(24, 56, 80, 4, progress);
+    if (progress >= 100 && t >= 1700UL) {
+        drawCenteredText("READY", 46, 1);
+    }
+}
+
+void DisplayManager::renderFace() noexcept {
+    m_face.render(millis());
 }
 
 void DisplayManager::updateHomeData(const String& personalityName, const String& lastActivity,
@@ -538,6 +639,118 @@ void DisplayManager::updateHomeData(const String& personalityName, const String&
 void DisplayManager::setMicMuted(bool muted) noexcept {
     m_micMuted = muted;
 }
+
+void DisplayManager::setMicStatus(const MicStatus status) noexcept {
+    if (m_micStatus == status) return;
+    m_micStatus = status;
+    m_screenDirty = true;   // repaint base + icon promptly on any state change
+}
+
+MicStatus DisplayManager::getMicStatus() const noexcept {
+    return m_micStatus;
+}
+
+bool DisplayManager::isMicIconAnimated() const noexcept {
+    return m_micStatus == MicStatus::RECORDING ||
+           m_micStatus == MicStatus::PROCESSING ||
+           m_micStatus == MicStatus::SPEAKING;
+}
+
+void DisplayManager::renderMicIcon() noexcept {
+    // Clear only the top-right corner, then draw the current glyph. This never
+    // touches the rest of the framebuffer, so animations avoid full-screen
+    // flicker and cost almost no CPU.
+    m_display.fillRect(mMicIconX, mMicIconY, mMicIconW, mMicIconH, SH110X_BLACK);
+    drawMicGlyph(mMicIconX, mMicIconY);
+    m_lastMicStatus = m_micStatus;
+}
+
+void DisplayManager::drawMicGlyph(uint8_t x0, uint8_t y0) noexcept {
+    const uint8_t cx = x0 + 6;   // mic centre within the 12x12 region
+    const uint8_t cy = y0 + 7;
+    const bool anim = isMicIconAnimated();
+    const uint8_t phase = m_micIconPhase;
+    const bool pulse = (phase % 2) == 0;   // ~200ms on/off at 100ms ticks
+
+    switch (m_micStatus) {
+        case MicStatus::MUTED: {
+            // Grey/disabled mic: hollow body, slash, and a couple of hatch marks.
+            m_display.drawRect(cx - 3, cy - 6, 6, 9, SH110X_WHITE);
+            m_display.drawPixel(cx, cy + 3, SH110X_WHITE);
+            m_display.drawPixel(cx, cy + 4, SH110X_WHITE);
+            m_display.drawPixel(cx, cy + 5, SH110X_WHITE);
+            m_display.drawLine(cx - 4, cy + 6, cx + 4, cy + 6, SH110X_WHITE);
+            m_display.drawLine(x0 + 1, y0 + 1, x0 + 10, y0 + 10, SH110X_WHITE);
+            m_display.drawLine(cx - 3, cy - 1, cx + 2, cy + 4, SH110X_WHITE);   // grey hatch
+            m_display.drawLine(cx - 3, cy - 4, cx, cy - 1, SH110X_WHITE);       // grey hatch
+            break;
+        }
+        case MicStatus::IDLE: {
+            // Solid white mic: ready.
+            m_display.fillRect(cx - 3, cy - 6, 6, 9, SH110X_WHITE);
+            m_display.drawLine(cx, cy + 3, cx, cy + 6, SH110X_WHITE);
+            m_display.drawLine(cx - 4, cy + 6, cx + 4, cy + 6, SH110X_WHITE);
+            break;
+        }
+        case MicStatus::LISTENING: {
+            // Solid mic + two in-bound arrows on the left: capturing intent.
+            m_display.fillRect(cx - 3, cy - 6, 6, 9, SH110X_WHITE);
+            m_display.drawLine(cx, cy + 3, cx, cy + 6, SH110X_WHITE);
+            m_display.drawLine(cx - 4, cy + 6, cx + 4, cy + 6, SH110X_WHITE);
+            m_display.drawLine(x0 + 1, cy - 3, x0 + 3, cy, SH110X_WHITE);
+            m_display.drawLine(x0 + 3, cy, x0 + 1, cy, SH110X_WHITE);
+            m_display.drawLine(x0 + 1, cy + 1, x0 + 3, cy + 3, SH110X_WHITE);
+            break;
+        }
+        case MicStatus::RECORDING: {
+            // Breathing pulse ring ~200ms around the mic.
+            m_display.fillRect(cx - 3, cy - 6, 6, 9, SH110X_WHITE);
+            m_display.drawLine(cx, cy + 3, cx, cy + 6, SH110X_WHITE);
+            m_display.drawLine(cx - 4, cy + 6, cx + 4, cy + 6, SH110X_WHITE);
+            if (pulse) {
+                m_display.drawCircle(cx, cy, 4, SH110X_WHITE);
+            } else {
+                m_display.drawCircle(cx, cy, 5, SH110X_WHITE);
+            }
+            break;
+        }
+        case MicStatus::PROCESSING: {
+            // Orbiting dot (rotates with phase): AI/STT working.
+            m_display.fillRect(cx - 3, cy - 6, 6, 9, SH110X_WHITE);
+            m_display.drawLine(cx, cy + 3, cx, cy + 6, SH110X_WHITE);
+            m_display.drawLine(cx - 4, cy + 6, cx + 4, cy + 6, SH110X_WHITE);
+            const float angle = (float)(phase * 36U) * 3.14159f / 180.0f;
+            const uint8_t dx = (uint8_t)(4.0f * cosf(angle));
+            const uint8_t dy = (uint8_t)(4.0f * sinf(angle));
+            m_display.drawPixel(cx + dx, cy + dy, SH110X_WHITE);
+            break;
+        }
+        case MicStatus::SPEAKING: {
+            // Mic + expanding sound waves.
+            m_display.fillRect(cx - 3, cy - 6, 6, 9, SH110X_WHITE);
+            m_display.drawLine(cx, cy + 3, cx, cy + 6, SH110X_WHITE);
+            m_display.drawLine(cx - 4, cy + 6, cx + 4, cy + 6, SH110X_WHITE);
+            const uint8_t r1 = pulse ? 4 : 5;
+            const uint8_t r2 = pulse ? 6 : 7;
+            m_display.drawCircle(cx, cy, r1, SH110X_WHITE);
+            m_display.drawCircle(cx, cy, r2, SH110X_WHITE);
+            break;
+        }
+        case MicStatus::ERROR: {
+            // Hollow mic with a cross: voice pipeline error.
+            m_display.drawRect(cx - 3, cy - 6, 6, 9, SH110X_WHITE);
+            m_display.drawPixel(cx, cy + 3, SH110X_WHITE);
+            m_display.drawPixel(cx, cy + 4, SH110X_WHITE);
+            m_display.drawLine(cx - 4, cy + 6, cx + 4, cy + 6, SH110X_WHITE);
+            m_display.drawLine(x0 + 1, y0 + 1, x0 + 10, y0 + 10, SH110X_WHITE);
+            m_display.drawLine(x0 + 10, y0 + 1, x0 + 1, y0 + 10, SH110X_WHITE);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 
 void DisplayManager::renderHome() noexcept {
     m_display.clearDisplay();
@@ -576,7 +789,7 @@ void DisplayManager::renderWidget(WidgetType widget, uint8_t& y) noexcept {
 void DisplayManager::renderClockWidget(uint8_t& y) noexcept {
     if (m_widgetData.clockStr.isEmpty()) return;
     m_display.setTextSize(2);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print(m_widgetData.clockStr);
     y += 18;
@@ -585,7 +798,7 @@ void DisplayManager::renderClockWidget(uint8_t& y) noexcept {
 void DisplayManager::renderGreetingWidget(uint8_t& y) noexcept {
     if (m_widgetData.greetingStr.isEmpty()) return;
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     String g = m_widgetData.greetingStr;
     if (g.length() > 20) g = g.substring(0, 18) + "...";
@@ -596,7 +809,7 @@ void DisplayManager::renderGreetingWidget(uint8_t& y) noexcept {
 void DisplayManager::renderNextReminderWidget(uint8_t& y) noexcept {
     if (m_widgetData.nextReminder.isEmpty()) return;
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print("R:");
     String r = m_widgetData.nextReminder;
@@ -608,7 +821,7 @@ void DisplayManager::renderNextReminderWidget(uint8_t& y) noexcept {
 void DisplayManager::renderProjectStatusWidget(uint8_t& y) noexcept {
     if (m_widgetData.projectStatus.isEmpty()) return;
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print("P:");
     String p = m_widgetData.projectStatus;
@@ -620,7 +833,7 @@ void DisplayManager::renderProjectStatusWidget(uint8_t& y) noexcept {
 void DisplayManager::renderStudyWidget(uint8_t& y) noexcept {
     if (m_widgetData.studySummary.isEmpty()) return;
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print("S:");
     String s = m_widgetData.studySummary;
@@ -632,7 +845,7 @@ void DisplayManager::renderStudyWidget(uint8_t& y) noexcept {
 void DisplayManager::renderProgressWidget(uint8_t& y) noexcept {
     if (m_widgetData.progressSummary.isEmpty()) return;
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print(m_widgetData.progressSummary);
     y += 10;
@@ -641,7 +854,7 @@ void DisplayManager::renderProgressWidget(uint8_t& y) noexcept {
 void DisplayManager::renderNotificationsWidget(uint8_t& y) noexcept {
     if (m_widgetData.notificationCount == 0) return;
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print("N:" + String(m_widgetData.notificationCount));
     y += 10;
@@ -649,7 +862,7 @@ void DisplayManager::renderNotificationsWidget(uint8_t& y) noexcept {
 
 void DisplayManager::renderWifiWidget(uint8_t& y) noexcept {
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     if (m_widgetData.wifiConnected) {
         m_display.print("WiFi:" + String(m_widgetData.wifiRSSI) + "dBm");
@@ -665,7 +878,7 @@ void DisplayManager::renderHeapWidget(uint8_t& y) noexcept {
     if (totalKB == 0) totalKB = 1;
     uint8_t pct = static_cast<uint8_t>((freeKB * 100UL) / totalKB);
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print("RAM:" + String(freeKB) + "K/" + String(totalKB) + "K " + String(pct) + "%");
     y += 10;
@@ -677,7 +890,7 @@ void DisplayManager::renderStorageWidget(uint8_t& y) noexcept {
     if (totalMB == 0) return;
     uint8_t pct = static_cast<uint8_t>((usedMB * 100UL) / totalMB);
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print("SD:" + String(usedMB) + "M/" + String(totalMB) + "M " + String(pct) + "%");
     y += 10;
@@ -686,7 +899,7 @@ void DisplayManager::renderStorageWidget(uint8_t& y) noexcept {
 void DisplayManager::renderContextWidget(uint8_t& y) noexcept {
     if (m_widgetData.contextName.isEmpty()) return;
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor(0, y);
     m_display.print("Mode:" + m_widgetData.contextName);
     y += 10;
@@ -746,7 +959,7 @@ void DisplayManager::renderListening() noexcept {
     const uint8_t breathFrame = frame % 20;
     const uint8_t breathRadius = 16 + (breathFrame < 10 ? breathFrame : 19 - breathFrame);
 
-    m_display.drawCircle(cx, cy, breathRadius, SSD1306_WHITE);
+    m_display.drawCircle(cx, cy, breathRadius, SH110X_WHITE);
 
     drawWave(cx, cy + 14, 4, frame, 5);
 
@@ -756,11 +969,11 @@ void DisplayManager::renderListening() noexcept {
         const uint8_t r = breathRadius + 3;
         const uint8_t dx = (uint8_t)((float)r * cosf(angle));
         const uint8_t dy = (uint8_t)((float)r * sinf(angle));
-        m_display.drawPixel(cx + dx, cy + dy, SSD1306_WHITE);
+        m_display.drawPixel(cx + dx, cy + dy, SH110X_WHITE);
     }
 
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     int16_t x1, y1;
     uint16_t w, h;
     const String& listeningLabel = m_stateLabels[static_cast<uint8_t>(DisplayState::LISTENING)];
@@ -783,14 +996,14 @@ void DisplayManager::renderThinking() noexcept {
 
     const uint8_t pulseFrame = frame % 20;
     const uint8_t pulseR = 18 + (pulseFrame < 10 ? pulseFrame : 19 - pulseFrame);
-    m_display.drawCircle(cx, cy, pulseR, SSD1306_WHITE);
+    m_display.drawCircle(cx, cy, pulseR, SH110X_WHITE);
 
     for (uint8_t i = 0; i < 4; ++i) {
         const float angle = (float)(frame * 5 + i * 90) * 3.14159f / 180.0f;
         const uint8_t r = 20 + ((frame + i * 3) % 8);
         const uint8_t dx = (uint8_t)((float)r * cosf(angle));
         const uint8_t dy = (uint8_t)((float)r * sinf(angle));
-        m_display.drawPixel(cx + dx, cy + dy, SSD1306_WHITE);
+        m_display.drawPixel(cx + dx, cy + dy, SH110X_WHITE);
     }
 
     int16_t x1, y1;
@@ -799,7 +1012,7 @@ void DisplayManager::renderThinking() noexcept {
     const char* thinkingText = thinkingLabel.isEmpty() ? "THINKING" : thinkingLabel.c_str();
     m_display.getTextBounds(thinkingText, 0, 0, &x1, &y1, &w, &h);
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor((m_displayWidth - w) / 2, 56);
     m_display.print(thinkingText);
 }
@@ -814,7 +1027,7 @@ void DisplayManager::renderSpeaking() noexcept {
 
     const uint8_t pulseFrame = frame % 16;
     const uint8_t pulseR = 3 + (pulseFrame < 8 ? pulseFrame : 15 - pulseFrame);
-    m_display.drawCircle(cx, 34, pulseR, SSD1306_WHITE);
+    m_display.drawCircle(cx, 34, pulseR, SH110X_WHITE);
 
     int16_t x1, y1;
     uint16_t w, h;
@@ -822,7 +1035,7 @@ void DisplayManager::renderSpeaking() noexcept {
     const char* speakingText = speakingLabel.isEmpty() ? "SPEAKING" : speakingLabel.c_str();
     m_display.getTextBounds(speakingText, 0, 0, &x1, &y1, &w, &h);
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     m_display.setCursor((m_displayWidth - w) / 2, 54);
     m_display.print(speakingText);
 }
@@ -835,13 +1048,13 @@ void DisplayManager::renderReminder() noexcept {
 
     const uint8_t pulseFrame = frame % 12;
     const uint8_t pulseR = 26 + (pulseFrame < 6 ? pulseFrame : 11 - pulseFrame);
-    m_display.drawCircle(cx, 22, pulseR, SSD1306_WHITE);
+    m_display.drawCircle(cx, 22, pulseR, SH110X_WHITE);
 
     drawBell(cx, 22, frame);
 
     if (!m_cachedTitle.isEmpty()) {
         m_display.setTextSize(1);
-        m_display.setTextColor(SSD1306_WHITE);
+        m_display.setTextColor(SH110X_WHITE);
         int16_t x1, y1;
         uint16_t w, h;
         m_display.getTextBounds(m_cachedTitle.c_str(), 0, 0, &x1, &y1, &w, &h);
@@ -864,7 +1077,7 @@ void DisplayManager::renderReminder() noexcept {
         const uint8_t dx = (uint8_t)(30.0f * cosf(angle));
         const uint8_t dy = (uint8_t)(30.0f * sinf(angle));
         if (i < countdown) {
-            m_display.drawPixel(cx + dx, 22 + dy, SSD1306_WHITE);
+            m_display.drawPixel(cx + dx, 22 + dy, SH110X_WHITE);
         }
     }
 }
@@ -882,11 +1095,11 @@ void DisplayManager::renderNotification() noexcept {
 
     drawCard(boxX, boxY, boxW, boxH);
 
-    m_display.fillRect(boxX, boxY, boxW, 8, SSD1306_WHITE);
+    m_display.fillRect(boxX, boxY, boxW, 8, SH110X_WHITE);
 
     if (!m_cachedTitle.isEmpty()) {
         m_display.setTextSize(1);
-        m_display.setTextColor(SSD1306_BLACK);
+        m_display.setTextColor(SH110X_BLACK);
         int16_t x1, y1;
         uint16_t w, h;
         m_display.getTextBounds(m_cachedTitle.c_str(), 0, 0, &x1, &y1, &w, &h);
@@ -896,7 +1109,7 @@ void DisplayManager::renderNotification() noexcept {
 
     if (!m_cachedMessage.isEmpty()) {
         m_display.setTextSize(1);
-        m_display.setTextColor(SSD1306_WHITE);
+        m_display.setTextColor(SH110X_WHITE);
         m_display.setCursor(boxX + 4, boxY + 12);
         m_display.print(m_cachedMessage);
     }
@@ -905,7 +1118,7 @@ void DisplayManager::renderNotification() noexcept {
     const uint8_t barY = boxY + boxH - 4;
     const uint8_t barW = 6;
     const uint8_t progress = (frame % 16) * barW / 16;
-    m_display.fillRect(barX, barY, progress, 2, SSD1306_WHITE);
+    m_display.fillRect(barX, barY, progress, 2, SH110X_WHITE);
 
     if (m_notificationTimeout && millis() >= m_notificationTimeout) {
         changeState(DisplayState::HOME);
@@ -925,16 +1138,16 @@ void DisplayManager::renderError() noexcept {
 
     const uint8_t xSize = 14 + ((frame % 6) < 3 ? 0 : 2);
     const uint8_t cy = 18;
-    m_display.drawLine(cx - xSize, cy - xSize, cx + xSize, cy + xSize, SSD1306_WHITE);
-    m_display.drawLine(cx - xSize, cy + xSize, cx + xSize, cy - xSize, SSD1306_WHITE);
+    m_display.drawLine(cx - xSize, cy - xSize, cx + xSize, cy + xSize, SH110X_WHITE);
+    m_display.drawLine(cx - xSize, cy + xSize, cx + xSize, cy - xSize, SH110X_WHITE);
 
     const uint8_t warnFrame = frame % 8;
     const uint8_t warnR = 18 + (warnFrame < 4 ? warnFrame : 7 - warnFrame);
-    m_display.drawCircle(cx, cy, warnR, SSD1306_WHITE);
+    m_display.drawCircle(cx, cy, warnR, SH110X_WHITE);
 
     if (!m_cachedTitle.isEmpty()) {
         m_display.setTextSize(1);
-        m_display.setTextColor(SSD1306_WHITE);
+        m_display.setTextColor(SH110X_WHITE);
         int16_t x1, y1;
         uint16_t w, h;
         m_display.getTextBounds(m_cachedTitle.c_str(), 0, 0, &x1, &y1, &w, &h);
@@ -961,7 +1174,7 @@ void DisplayManager::renderOTAProgress() noexcept {
     const uint8_t frame = m_animationFrame;
 
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     int16_t x1, y1;
     uint16_t w, h;
     m_display.getTextBounds("FIRMWARE UPDATE", 0, 0, &x1, &y1, &w, &h);
@@ -971,7 +1184,7 @@ void DisplayManager::renderOTAProgress() noexcept {
     drawProgressBar(10, 22, 108, 12, m_cachedOTAProgress);
 
     const uint8_t scanX = 10 + (frame % 108);
-    m_display.drawLine(scanX, 22, scanX, 34, SSD1306_WHITE);
+    m_display.drawLine(scanX, 22, scanX, 34, SH110X_WHITE);
 
     char pctStr[6];
     snprintf(pctStr, sizeof(pctStr), "%d%%", m_cachedOTAProgress);
@@ -992,7 +1205,7 @@ void DisplayManager::renderWifiStatus() noexcept {
 
     const char* title = m_cachedWifiConnected ? "WiFi Connected" : "WiFi Disconnected";
     m_display.setTextSize(1);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     int16_t x1, y1;
     uint16_t w, h;
     m_display.getTextBounds(title, 0, 0, &x1, &y1, &w, &h);
@@ -1023,7 +1236,7 @@ void DisplayManager::renderStorageStatus() noexcept {
 
     const char* title = "Storage";
     m_display.setTextSize(2);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     int16_t x1, y1;
     uint16_t w, h;
     m_display.getTextBounds(title, 0, 0, &x1, &y1, &w, &h);
@@ -1057,7 +1270,7 @@ void DisplayManager::renderMessage() noexcept {
 
     if (!m_cachedTitle.isEmpty()) {
         m_display.setTextSize(2);
-        m_display.setTextColor(SSD1306_WHITE);
+        m_display.setTextColor(SH110X_WHITE);
         int16_t x1, y1;
         uint16_t w, h;
         m_display.getTextBounds(m_cachedTitle.c_str(), 0, 0, &x1, &y1, &w, &h);
@@ -1090,7 +1303,7 @@ void DisplayManager::renderStartupGreeting() noexcept {
     const uint8_t startY = 0;
     for (uint8_t i = 0; i < m_cachedGreetingLineCount; ++i) {
         m_display.setTextSize(1);
-        m_display.setTextColor(SSD1306_WHITE);
+        m_display.setTextColor(SH110X_WHITE);
         m_display.setCursor(0, startY + i * lineHeight);
         m_display.print(m_cachedGreetingLines[i]);
     }
@@ -1102,7 +1315,7 @@ void DisplayManager::renderSleep() noexcept {
 
 void DisplayManager::drawCenteredText(const String& text, uint8_t y, uint8_t textSize) noexcept {
     m_display.setTextSize(textSize);
-    m_display.setTextColor(SSD1306_WHITE);
+    m_display.setTextColor(SH110X_WHITE);
     int16_t x1, y1;
     uint16_t w, h;
     m_display.getTextBounds(text.c_str(), 0, 0, &x1, &y1, &w, &h);
@@ -1113,12 +1326,12 @@ void DisplayManager::drawCenteredText(const String& text, uint8_t y, uint8_t tex
 void DisplayManager::drawProgressBar(uint8_t x, uint8_t y, uint8_t width, uint8_t height, uint8_t percent) noexcept {
     if (percent > 100) percent = 100;
 
-    m_display.drawRect(x, y, width, height, SSD1306_WHITE);
+    m_display.drawRect(x, y, width, height, SH110X_WHITE);
 
     if (percent > 0) {
         const uint8_t innerWidth = (width - 2) * percent / 100;
         if (innerWidth > 0) {
-            m_display.fillRect(x + 1, y + 1, innerWidth, height - 2, SSD1306_WHITE);
+            m_display.fillRect(x + 1, y + 1, innerWidth, height - 2, SH110X_WHITE);
         }
     }
 }
@@ -1135,38 +1348,38 @@ void DisplayManager::drawWifiIcon(uint8_t x, uint8_t y, int32_t signal) noexcept
         const uint8_t barHeight = 4 + i * 4;
         const uint8_t barY = y + 16 - barHeight;
         if (i < bars) {
-            m_display.fillRect(x + i * 4, barY, 3, barHeight, SSD1306_WHITE);
+            m_display.fillRect(x + i * 4, barY, 3, barHeight, SH110X_WHITE);
         } else {
-            m_display.drawRect(x + i * 4, barY, 3, barHeight, SSD1306_WHITE);
+            m_display.drawRect(x + i * 4, barY, 3, barHeight, SH110X_WHITE);
         }
     }
 
-    m_display.drawLine(x + 1, y + 16, x + 14, y + 16, SSD1306_WHITE);
+    m_display.drawLine(x + 1, y + 16, x + 14, y + 16, SH110X_WHITE);
 }
 
 void DisplayManager::drawStorageIcon(uint8_t x, uint8_t y) noexcept {
-    m_display.drawRect(x, y, 20, 14, SSD1306_WHITE);
-    m_display.drawRect(x + 2, y - 4, 16, 6, SSD1306_WHITE);
-    m_display.drawLine(x + 2, y, x + 18, y, SSD1306_WHITE);
-    m_display.drawLine(x + 6, y + 4, x + 6, y + 10, SSD1306_WHITE);
-    m_display.drawLine(x + 12, y + 4, x + 12, y + 10, SSD1306_WHITE);
+    m_display.drawRect(x, y, 20, 14, SH110X_WHITE);
+    m_display.drawRect(x + 2, y - 4, 16, 6, SH110X_WHITE);
+    m_display.drawLine(x + 2, y, x + 18, y, SH110X_WHITE);
+    m_display.drawLine(x + 6, y + 4, x + 6, y + 10, SH110X_WHITE);
+    m_display.drawLine(x + 12, y + 4, x + 12, y + 10, SH110X_WHITE);
 }
 
 void DisplayManager::drawMicStatus(uint8_t x, uint8_t y) noexcept {
     const uint8_t cx = x + 5;
     const uint8_t cy = y + 6;
     // Mic body: small rectangle
-    m_display.drawRect(cx - 3, cy - 5, 6, 8, SSD1306_WHITE);
+    m_display.drawRect(cx - 3, cy - 5, 6, 8, SH110X_WHITE);
     // Mic stem: vertical line
-    m_display.drawPixel(cx, cy + 3, SSD1306_WHITE);
-    m_display.drawPixel(cx, cy + 4, SSD1306_WHITE);
+    m_display.drawPixel(cx, cy + 3, SH110X_WHITE);
+    m_display.drawPixel(cx, cy + 4, SH110X_WHITE);
     // Mic base: small arc
-    m_display.drawPixel(cx - 2, cy + 4, SSD1306_WHITE);
-    m_display.drawPixel(cx + 2, cy + 4, SSD1306_WHITE);
+    m_display.drawPixel(cx - 2, cy + 4, SH110X_WHITE);
+    m_display.drawPixel(cx + 2, cy + 4, SH110X_WHITE);
 
     if (m_micMuted) {
         // Mute slash: diagonal line across the mic
-        m_display.drawLine(cx - 4, cy - 6, cx + 4, cy + 6, SSD1306_WHITE);
+        m_display.drawLine(cx - 4, cy - 6, cx + 4, cy + 6, SH110X_WHITE);
     }
 }
 
@@ -1175,25 +1388,26 @@ void DisplayManager::drawStatusBar() noexcept {
     drawMicStatus(16, 0);
 
     if (m_cachedTotalMB > 0) {
-        drawStorageIcon(104, 0);
+        // Keep clear of the top-right mic-status icon (x >= 116).
+        drawStorageIcon(96, 0);
     }
 
-    m_display.drawLine(0, 10, m_displayWidth, 10, SSD1306_WHITE);
+    m_display.drawLine(0, 10, m_displayWidth, 10, SH110X_WHITE);
 }
 
 void DisplayManager::drawRoundedBox(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t r) noexcept {
     if (r > w / 2) r = w / 2;
     if (r > h / 2) r = h / 2;
 
-    m_display.drawLine(x + r, y, x + w - r, y, SSD1306_WHITE);
-    m_display.drawLine(x + r, y + h, x + w - r, y + h, SSD1306_WHITE);
-    m_display.drawLine(x, y + r, x, y + h - r, SSD1306_WHITE);
-    m_display.drawLine(x + w, y + r, x + w, y + h - r, SSD1306_WHITE);
+    m_display.drawLine(x + r, y, x + w - r, y, SH110X_WHITE);
+    m_display.drawLine(x + r, y + h, x + w - r, y + h, SH110X_WHITE);
+    m_display.drawLine(x, y + r, x, y + h - r, SH110X_WHITE);
+    m_display.drawLine(x + w, y + r, x + w, y + h - r, SH110X_WHITE);
 
-    m_display.drawCircleHelper(x + r, y + r, r, 0x08, SSD1306_WHITE);
-    m_display.drawCircleHelper(x + w - r, y + r, r, 0x02, SSD1306_WHITE);
-    m_display.drawCircleHelper(x + r, y + h - r, r, 0x04, SSD1306_WHITE);
-    m_display.drawCircleHelper(x + w - r, y + h - r, r, 0x01, SSD1306_WHITE);
+    m_display.drawCircleHelper(x + r, y + r, r, 0x08, SH110X_WHITE);
+    m_display.drawCircleHelper(x + w - r, y + r, r, 0x02, SH110X_WHITE);
+    m_display.drawCircleHelper(x + r, y + h - r, r, 0x04, SH110X_WHITE);
+    m_display.drawCircleHelper(x + w - r, y + h - r, r, 0x01, SH110X_WHITE);
 }
 
 void DisplayManager::drawCard(uint8_t x, uint8_t y, uint8_t w, uint8_t h) noexcept {
@@ -1203,7 +1417,7 @@ void DisplayManager::drawCard(uint8_t x, uint8_t y, uint8_t w, uint8_t h) noexce
 void DisplayManager::drawPulse(uint8_t cx, uint8_t cy, uint8_t maxRadius, uint8_t frame) noexcept {
     const uint8_t phase = frame % 16;
     const uint8_t r = 2 + (phase * maxRadius / 16);
-    m_display.drawCircle(cx, cy, r, SSD1306_WHITE);
+    m_display.drawCircle(cx, cy, r, SH110X_WHITE);
 }
 
 void DisplayManager::drawSpinner(uint8_t cx, uint8_t cy, uint8_t radius, uint8_t frame) noexcept {
@@ -1213,7 +1427,7 @@ void DisplayManager::drawSpinner(uint8_t cx, uint8_t cy, uint8_t radius, uint8_t
         const uint8_t dx = (uint8_t)((float)radius * cosf(angle));
         const uint8_t dy = (uint8_t)((float)radius * sinf(angle));
         const uint8_t dotSize = (i == (frame % numDots)) ? 3 : 2;
-        m_display.fillCircle(cx + dx, cy + dy, dotSize, SSD1306_WHITE);
+        m_display.fillCircle(cx + dx, cy + dy, dotSize, SH110X_WHITE);
     }
 }
 
@@ -1222,7 +1436,7 @@ void DisplayManager::drawWave(uint8_t cx, uint8_t cy, uint8_t amp, uint8_t frame
         const uint8_t phase = (frame + i * 4) % 32;
         const uint8_t h = 4 + (phase < 16 ? phase : 31 - phase) * amp / 16;
         const uint8_t x = cx - count * 3 + i * 6;
-        m_display.drawLine(x, cy - h / 2, x, cy + h / 2, SSD1306_WHITE);
+        m_display.drawLine(x, cy - h / 2, x, cy + h / 2, SH110X_WHITE);
     }
 }
 
@@ -1233,7 +1447,7 @@ void DisplayManager::drawRing(uint8_t cx, uint8_t cy, uint8_t radius, uint8_t th
         const float a = angle + (float)i * 6.2832f / (float)segments;
         const uint8_t dx = (uint8_t)((float)radius * cosf(a));
         const uint8_t dy = (uint8_t)((float)radius * sinf(a));
-        m_display.fillCircle(cx + dx, cy + dy, thickness, SSD1306_WHITE);
+        m_display.fillCircle(cx + dx, cy + dy, thickness, SH110X_WHITE);
     }
 }
 
@@ -1244,40 +1458,40 @@ void DisplayManager::drawEqualizer(uint8_t x, uint8_t y, uint8_t barCount, uint8
         const uint8_t h = 3 + (phase < 10 ? phase : 19 - phase) * (maxHeight - 3) / 10;
         const uint8_t bx = x + i * (barWidth + 2);
         const uint8_t by = y + maxHeight - h;
-        m_display.fillRoundRect(bx, by, barWidth, h, 1, SSD1306_WHITE);
+        m_display.fillRoundRect(bx, by, barWidth, h, 1, SH110X_WHITE);
     }
 }
 
 void DisplayManager::drawMicrophone(uint8_t cx, uint8_t cy) noexcept {
-    m_display.fillRoundRect(cx - 4, cy - 10, 8, 12, 2, SSD1306_WHITE);
-    m_display.drawLine(cx, cy + 2, cx, cy + 8, SSD1306_WHITE);
-    m_display.drawLine(cx - 6, cy + 8, cx + 6, cy + 8, SSD1306_WHITE);
-    m_display.drawCircle(cx, cy - 6, 2, SSD1306_WHITE);
+    m_display.fillRoundRect(cx - 4, cy - 10, 8, 12, 2, SH110X_WHITE);
+    m_display.drawLine(cx, cy + 2, cx, cy + 8, SH110X_WHITE);
+    m_display.drawLine(cx - 6, cy + 8, cx + 6, cy + 8, SH110X_WHITE);
+    m_display.drawCircle(cx, cy - 6, 2, SH110X_WHITE);
 }
 
 void DisplayManager::drawBell(uint8_t cx, uint8_t cy, uint8_t frame) noexcept {
     const int8_t shake = (frame % 8 < 4) ? 0 : ((frame % 8 < 6) ? -1 : 1);
     const uint8_t bx = cx + shake;
 
-    m_display.fillCircle(bx, cy - 8, 2, SSD1306_WHITE);
-    m_display.drawLine(bx - 6, cy - 2, bx + 6, cy - 2, SSD1306_WHITE);
-    m_display.drawLine(bx - 4, cy - 6, bx - 6, cy - 2, SSD1306_WHITE);
-    m_display.drawLine(bx + 4, cy - 6, bx + 6, cy - 2, SSD1306_WHITE);
-    m_display.drawLine(bx - 2, cy - 2, bx - 2, cy + 2, SSD1306_WHITE);
-    m_display.drawLine(bx + 2, cy - 2, bx + 2, cy + 2, SSD1306_WHITE);
+    m_display.fillCircle(bx, cy - 8, 2, SH110X_WHITE);
+    m_display.drawLine(bx - 6, cy - 2, bx + 6, cy - 2, SH110X_WHITE);
+    m_display.drawLine(bx - 4, cy - 6, bx - 6, cy - 2, SH110X_WHITE);
+    m_display.drawLine(bx + 4, cy - 6, bx + 6, cy - 2, SH110X_WHITE);
+    m_display.drawLine(bx - 2, cy - 2, bx - 2, cy + 2, SH110X_WHITE);
+    m_display.drawLine(bx + 2, cy - 2, bx + 2, cy + 2, SH110X_WHITE);
 }
 
 void DisplayManager::drawThinkingCore(uint8_t cx, uint8_t cy, uint8_t frame) noexcept {
     const uint8_t coreRadius = 5 + (frame % 4);
-    m_display.fillCircle(cx, cy, coreRadius, SSD1306_WHITE);
-    m_display.fillCircle(cx, cy, coreRadius - 2, SSD1306_BLACK);
+    m_display.fillCircle(cx, cy, coreRadius, SH110X_WHITE);
+    m_display.fillCircle(cx, cy, coreRadius - 2, SH110X_BLACK);
 
     const float angle = (float)(frame * 8) * 3.14159f / 180.0f;
     for (uint8_t i = 0; i < 3; ++i) {
         const float a = angle + (float)i * 2.0944f;
         const uint8_t px = cx + (uint8_t)((float)coreRadius * cosf(a));
         const uint8_t py = cy + (uint8_t)((float)coreRadius * sinf(a));
-        m_display.fillCircle(px, py, 1, SSD1306_WHITE);
+        m_display.fillCircle(px, py, 1, SH110X_WHITE);
     }
 }
 
@@ -1296,6 +1510,7 @@ void DisplayManager::updateAnimation() noexcept {
             case DisplayState::NOTIFICATION:
             case DisplayState::ERROR:
             case DisplayState::OTA:
+            case DisplayState::FACE:
                 m_screenDirty = true;
                 break;
             default:
@@ -1306,6 +1521,12 @@ void DisplayManager::updateAnimation() noexcept {
 
 void DisplayManager::updateScreenTimeout() noexcept {
     if (m_sleeping) return;
+
+    // The presence face is always awake; only informational screens sleep.
+    if (m_currentState == DisplayState::FACE) {
+        m_lastActivityTime = millis();
+        return;
+    }
 
     const unsigned long now = millis();
     if (now - m_lastActivityTime >= m_screenTimeoutMs) {

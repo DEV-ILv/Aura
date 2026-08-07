@@ -14,6 +14,10 @@ security review.
 
 ### Added
 
+- **Documentation: verified INMP441 microphone wiring** — `docs/hardware-wiring.md`
+  records the validated connections (VDD→3V3, GND, SCK→GPIO26, WS→GPIO25,
+  SD→GPIO34, L/R→GND for the left channel) and README documents the same;
+  pins match `config.h` (`MIC_BCLK_PIN=26`, `MIC_WS_PIN=25`, `MIC_DATA_PIN=34`).
 - **Development / production build modes** — new `AURA_DEVELOPMENT_MODE`
   compile-time flag (defaults to `0`/production). Production keeps the random
   first-boot admin password + MAC-derived AP password. Development mode

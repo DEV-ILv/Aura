@@ -1,4 +1,5 @@
 #include "audio_manager.h"
+#include "event_bus.h"
 #include <driver/i2s_std.h>
 #include <esp_heap_caps.h>
 #include <cstring>
@@ -62,6 +63,10 @@ AudioManager::AudioManager() noexcept
       m_lastAudioPeak(0.0f),
       m_noiseFloor(50),
       m_noiseThreshold(WAKE_WORD_NOISE_THRESHOLD_DEFAULT),
+      m_voiceActive(false),
+      m_vadMonitoring(true),
+      m_voiceDebounce(0),
+      m_lastVadSampleTime(0),
       m_queueProcessing(false)
 {
 }
@@ -166,6 +171,45 @@ bool AudioManager::initialize() noexcept
 
     Logger::info(kLogCategory, "Audio manager initialized (16kHz, 16-bit, Mono)");
 
+    // Boot-time microphone self-test: logs live RMS/peak for hardware verification
+    {
+        Logger::info(kLogCategory, "Mic: First DMA read...");
+        uint8_t raw[kI2SFrameSize];
+        size_t n = 0;
+        if (m_microphoneHandle != nullptr &&
+            i2s_channel_read(m_microphoneHandle, raw, sizeof(raw), &n, pdMS_TO_TICKS(50)) == ESP_OK &&
+            n > 0)
+        {
+            const int32_t* w = reinterpret_cast<const int32_t*>(raw);
+            const size_t cnt = n / sizeof(int32_t);
+            const size_t show = cnt < 8 ? cnt : 8;
+            for (size_t i = 0; i < show; ++i)
+            {
+                Logger::info(kLogCategory, "Mic raw[%u] = 0x%08X (%ld)",
+                    static_cast<unsigned>(i),
+                    static_cast<unsigned>(static_cast<uint32_t>(w[i])),
+                    static_cast<long>(w[i]));
+            }
+        }
+        else
+        {
+            Logger::warning(kLogCategory, "Mic self-test: no I2S samples captured");
+        }
+
+        for (int round = 0; round < 10; ++round)
+        {
+            if (round > 0) delay(300);
+            float micRms = 0.0f;
+            float micPeak = 0.0f;
+            if (sampleMicLevel(micRms, micPeak))
+            {
+                Logger::info(kLogCategory, "Mic self-test[%d]: RMS=%u peak=%u",
+                    round,
+                    static_cast<unsigned>(micRms), static_cast<unsigned>(micPeak));
+            }
+        }
+    }
+
     return true;
 }
 
@@ -185,13 +229,21 @@ void AudioManager::update() noexcept
 
     if (m_state == AudioState::RECORDING && m_recording)
     {
+        // A real capture is running: drop the idle VAD latch and just read.
+        m_voiceActive = false;
         readMicrophone(nullptr, 0, m_bufferSize);
+        return;
     }
 
     if (m_state == AudioState::PLAYING && m_playing)
     {
         writeSpeaker(nullptr, 0, m_bufferSize);
+        return;
     }
+
+    // Otherwise the mic is idle: keep an always-on speech monitor so the
+    // LED/UI can react to voice before any STT/AI pipeline starts.
+    runVoiceActivityDetection();
 }
 
 // ============================================================================
@@ -430,6 +482,7 @@ bool AudioManager::flushPlayback() noexcept
 bool AudioManager::configureInput() noexcept
 {
     Logger::debug(kLogCategory, "Configuring microphone input");
+    Logger::info(kLogCategory, "Mic: Installing I2S driver (port 0, RX, master)...");
 
     i2s_chan_config_t chan_cfg = {
         .id = I2S_NUM_0,
@@ -445,6 +498,7 @@ bool AudioManager::configureInput() noexcept
         Logger::error(kLogCategory, "Microphone I2S channel alloc failed: %d", static_cast<int>(result));
         return false;
     }
+    Logger::info(kLogCategory, "Mic: Driver OK");
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = {
@@ -453,11 +507,12 @@ bool AudioManager::configureInput() noexcept
             .mclk_multiple = I2S_MCLK_MULTIPLE_256,
         },
         .slot_cfg = {
-            .data_bit_width = I2S_DATA_BIT_WIDTH_16BIT,
+            .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
             .slot_mode = I2S_SLOT_MODE_MONO,
             .slot_mask = I2S_STD_SLOT_LEFT,
-            .ws_width = I2S_DATA_BIT_WIDTH_16BIT,
-            .msb_right = false,
+            .ws_width = I2S_DATA_BIT_WIDTH_32BIT,
+            .bit_shift = false,
+            .msb_right = true,
         },
         .gpio_cfg = {
             .mclk = static_cast<gpio_num_t>(I2S_GPIO_UNUSED),
@@ -468,6 +523,8 @@ bool AudioManager::configureInput() noexcept
         },
     };
 
+    Logger::info(kLogCategory, "Mic: Setting pins BCLK=%d LRCLK=%d DATA=%d",
+        static_cast<int>(MIC_BCLK_PIN), static_cast<int>(MIC_WS_PIN), static_cast<int>(MIC_DATA_PIN));
     result = i2s_channel_init_std_mode(m_microphoneHandle, &std_cfg);
     if (result != ESP_OK)
     {
@@ -476,7 +533,9 @@ bool AudioManager::configureInput() noexcept
         m_microphoneHandle = nullptr;
         return false;
     }
+    Logger::info(kLogCategory, "Mic: Pins OK (std mode, 32-bit, Philips, left)");
 
+    Logger::info(kLogCategory, "Mic: Starting peripheral...");
     result = i2s_channel_enable(m_microphoneHandle);
     if (result != ESP_OK)
     {
@@ -485,6 +544,10 @@ bool AudioManager::configureInput() noexcept
         m_microphoneHandle = nullptr;
         return false;
     }
+    Logger::info(kLogCategory, "Mic: Running (DMA %d x %d, %u Hz)",
+        static_cast<int>(DEFAULT_DMA_BUFFER_COUNT),
+        static_cast<unsigned>(m_dmaBufferSize),
+        static_cast<unsigned>(m_sampleRate));
 
     Logger::debug(kLogCategory, "Microphone configured (I2S port %d)", static_cast<int>(I2S_NUM_0));
     return true;
@@ -563,6 +626,7 @@ bool AudioManager::initializeI2S() noexcept
         return false;
     }
 
+#if AURA_HW_SPEAKER_PRESENT
     if (!configureOutput())
     {
         Logger::error(kLogCategory, "Failed to configure speaker");
@@ -574,6 +638,9 @@ bool AudioManager::initializeI2S() noexcept
         }
         return false;
     }
+#else
+    Logger::info(kLogCategory, "Speaker output skipped (not connected)");
+#endif
 
     m_i2sInitialized = true;
     Logger::debug(kLogCategory, "I2S initialized");
@@ -663,8 +730,17 @@ bool AudioManager::readMicrophone(uint8_t* buffer, size_t bufferSize, size_t& by
         return true;  // No data available, but not an error
     }
 
-    int16_t* samples = reinterpret_cast<int16_t*>(tempBuffer);
-    size_t sampleCount = frameBytesRead / sizeof(int16_t);
+    // Convert 32-bit-slot samples (24-bit left-justified from INMP441) to 16-bit
+    const int32_t* rawSamples = reinterpret_cast<const int32_t*>(tempBuffer);
+    size_t rawSampleCount = frameBytesRead / sizeof(int32_t);
+    int16_t converted[kI2SFrameSize / sizeof(int16_t)];
+    size_t sampleCount = 0;
+    for (size_t i = 0; i < rawSampleCount; ++i)
+    {
+        converted[sampleCount++] = static_cast<int16_t>(rawSamples[i] >> 8);
+    }
+
+    int16_t* samples = converted;
 
     // Compute energy and peak before gain
     {
@@ -693,20 +769,21 @@ bool AudioManager::readMicrophone(uint8_t* buffer, size_t bufferSize, size_t& by
     }
 
     // Store in application recording buffer (simple buffering)
+    const size_t convertedBytes = sampleCount * sizeof(int16_t);
     if (buffer && bufferSize > 0)
     {
-        size_t copySize = (frameBytesRead < bufferSize) ? frameBytesRead : bufferSize;
-        std::memcpy(buffer, tempBuffer, copySize);
+        size_t copySize = (convertedBytes < bufferSize) ? convertedBytes : bufferSize;
+        std::memcpy(buffer, converted, copySize);
         bytesRead = copySize;
     }
     else
     {
         // Store in internal buffer for later retrieval
-        if (frameBytesRead <= m_bufferSize)
+        if (convertedBytes <= m_bufferSize)
         {
-            std::memcpy(m_recordBuffer, tempBuffer, frameBytesRead);
+            std::memcpy(m_recordBuffer, converted, convertedBytes);
         }
-        bytesRead = frameBytesRead;
+        bytesRead = convertedBytes;
     }
 
     return true;
@@ -716,7 +793,7 @@ bool AudioManager::writeSpeaker(const uint8_t* buffer, size_t bufferSize, size_t
 {
     bytesWritten = 0;
 
-    if (!m_initialized || !m_playbackBuffer)
+    if (!m_initialized || !m_playbackBuffer || m_speakerHandle == nullptr)
     {
         return false;
     }
@@ -812,6 +889,138 @@ float AudioManager::getAudioEnergy() const noexcept
 float AudioManager::getAudioPeak() const noexcept
 {
     return m_lastAudioPeak;
+}
+
+bool AudioManager::sampleMicLevel(float& energyOut, float& peakOut) noexcept
+{
+    energyOut = 0.0f;
+    peakOut = 0.0f;
+
+    if (!m_initialized || m_microphoneHandle == nullptr)
+    {
+        return false;
+    }
+
+    float sumSq = 0.0f;
+    float peak = 0.0f;
+    size_t totalSamples = 0;
+
+    // Block briefly per read so the DMA ring can fill even on the first call,
+    // then stop once we have ~1 frame (512 samples @ 16 kHz) of audio.
+    uint8_t tempBuffer[kI2SFrameSize];
+    for (int pass = 0; pass < 8; ++pass)
+    {
+        size_t frameBytes = 0;
+        const esp_err_t result = i2s_channel_read(
+            m_microphoneHandle, tempBuffer, sizeof(tempBuffer), &frameBytes, pdMS_TO_TICKS(25));
+        if (result != ESP_OK || frameBytes == 0) continue;
+
+        const int32_t* raw = reinterpret_cast<const int32_t*>(tempBuffer);
+        const size_t count = frameBytes / sizeof(int32_t);
+        for (size_t i = 0; i < count; ++i)
+        {
+            const float v = static_cast<float>(static_cast<int16_t>(raw[i] >> 8));
+            sumSq += v * v;
+            const float absV = fabsf(v);
+            if (absV > peak) peak = absV;
+        }
+        totalSamples += count;
+        if (totalSamples >= 512) break;
+    }
+
+    if (totalSamples == 0) return false;
+
+    const float rms = sqrtf(sumSq / static_cast<float>(totalSamples));
+    m_lastAudioEnergy = rms;
+    m_lastAudioPeak = peak;
+    energyOut = rms;
+    peakOut = peak;
+    return true;
+}
+
+void AudioManager::runVoiceActivityDetection() noexcept
+{
+    if (!m_initialized || m_microphoneHandle == nullptr || !m_vadMonitoring)
+    {
+        return;
+    }
+
+    const unsigned long now = millis();
+    const uint32_t interval = m_voiceActive ? kVadActiveIntervalMs : kVadIdleIntervalMs;
+    if (now - m_lastVadSampleTime < interval)
+    {
+        return;
+    }
+    m_lastVadSampleTime = now;
+
+    float energy = 0.0f;
+    float peak = 0.0f;
+    if (!sampleMicLevel(energy, peak))
+    {
+        return;
+    }
+
+    const float threshold = static_cast<float>(m_noiseFloor) + static_cast<float>(m_noiseThreshold);
+    const bool above = (energy > threshold);
+
+    if (!m_voiceActive)
+    {
+        if (above)
+        {
+            m_voiceActive = true;
+            m_voiceDebounce = 0;
+
+            // Map RMS energy (0..32768) to a 0..255 voice level for the VU.
+            const uint8_t level = static_cast<uint8_t>(
+                255U * (energy / 16384.0F));
+            if (eventBus.isInitialized())
+            {
+                eventBus.publish(EventType::VOICE_DETECTED, "AudioManager",
+                    "{\"energy\":" + String(energy, 1)
+                    + ",\"level\":" + String(level) + "}");
+            }
+        }
+        return;
+    }
+
+    // Voice is latched on: keep sampling to auto-release after a short
+    // hysteresis so natural speech pauses do not flicker the indicator.
+    if (!above)
+    {
+        if (++m_voiceDebounce >= kVadReleaseFrames)
+        {
+            m_voiceActive = false;
+            m_voiceDebounce = 0;
+            if (eventBus.isInitialized())
+            {
+                eventBus.publish(EventType::VOICE_ENDED, "AudioManager", "");
+            }
+        }
+    }
+    else
+    {
+        m_voiceDebounce = 0;
+    }
+}
+
+bool AudioManager::isVoiceActive() const noexcept
+{
+    return m_voiceActive;
+}
+
+void AudioManager::setVoiceActivityMonitoring(bool enabled) noexcept
+{
+    if (m_vadMonitoring == enabled) return;
+    m_vadMonitoring = enabled;
+    if (!enabled) {
+        m_voiceActive = false;   // reset the latch so the LED relaxes immediately
+        m_lastVadSampleTime = 0;
+    }
+}
+
+bool AudioManager::isVoiceActivityMonitoringEnabled() const noexcept
+{
+    return m_vadMonitoring;
 }
 
 uint16_t AudioManager::getNoiseFloor() const noexcept

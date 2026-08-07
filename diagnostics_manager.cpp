@@ -153,16 +153,11 @@ DiagResult DiagnosticsManager::testOTA() noexcept {
 }
 
 DiagResult DiagnosticsManager::testTouchSensor() noexcept {
-    // Touch sensor uses GPIO TOUCH_PIN (13)
-    int touchValue = touchRead(TOUCH_PIN);
-    if (touchValue > 0 && touchValue < 4096) {
-        addResult("Touch Sensor", DiagResult::PASS,
-            String("Reading: ") + String(touchValue));
-        return DiagResult::PASS;
-    }
-    addResult("Touch Sensor", DiagResult::FAIL,
-        String("Abnormal reading: ") + String(touchValue));
-    return DiagResult::FAIL;
+    // TTP223 touch sensor uses digital GPIO TOUCH_PIN (13), active-high
+    bool touched = (digitalRead(TOUCH_PIN) == HIGH);
+    addResult("Touch Sensor", DiagResult::PASS,
+        String("State: ") + (touched ? "touched" : "released"));
+    return DiagResult::PASS;
 }
 
 String DiagnosticsManager::getResultsJson() const noexcept {

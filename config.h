@@ -67,7 +67,7 @@ constexpr const char* kCompiler     = __VERSION__;
 } // namespace aura
 
 //======================================================
-// OLED DISPLAY (SSD1306)
+// OLED DISPLAY (SH1106)
 //======================================================
 
 #define OLED_SDA_PIN           21
@@ -113,6 +113,18 @@ constexpr const char* kCompiler     = __VERSION__;
 #define TOUCH_DEBOUNCE         50
 
 //======================================================
+// HARDWARE PROFILE - current prototype (MK-II)
+//======================================================
+// Declares which optional output peripherals are physically connected.
+// 1 = module present on this unit (initialized normally).
+// 0 = module absent  (marked OFFLINE, initialization skipped, boot continues).
+// Input peripherals (Display, Microphone, SD, Touch) are detected/handled
+// independently and are not listed here.
+
+#define AURA_HW_LED_RING_PRESENT  1   // WS2812 LED ring   : connected (GPIO4, 16 LEDs)
+#define AURA_HW_SPEAKER_PRESENT   0   // MAX98357 amp+spkr : NOT connected
+
+//======================================================
 // MICRO SD (SPI)
 //======================================================
 
@@ -120,6 +132,11 @@ constexpr const char* kCompiler     = __VERSION__;
 #define SD_MOSI_PIN            23
 #define SD_MISO_PIN            19
 #define SD_SCK_PIN             18
+
+// SD SPI clock. 4 MHz is well within the SD SPI spec, tolerant of long
+// dupont-wire runs and marginal cards, and materially improves reliability
+// over the 25 MHz default. Can be raised if the card/installation is solid.
+#define SD_SPI_FREQUENCY_HZ    4000000UL
 
 //======================================================
 // WIFI SETUP PORTAL
@@ -155,7 +172,7 @@ constexpr const char* kCompiler     = __VERSION__;
 // GOOGLE AI
 //======================================================
 
-#define GEMINI_MODEL               "gemini-2.5-flash"
+#define GEMINI_MODEL               "gemini-3.5-flash-lite"
 
 #define GEMINI_URL \
 "https://generativelanguage.googleapis.com/v1beta/models/" GEMINI_MODEL ":generateContent"
@@ -173,11 +190,69 @@ constexpr const char* kCompiler     = __VERSION__;
 #define GEMINI_CACHE_SIZE           32
 #define GEMINI_BUFFER_SIZE          4096
 
-#define GOOGLE_STT_URL \
-"https://speech.googleapis.com/v1/speech:recognize"
+//======================================================
+// VOICE PROVIDER SELECTION - Speech-to-Text / Text-to-Speech
+//======================================================
+// AURA supports interchangeable speech providers. The former Google Cloud
+// STT/TTS implementation has been removed; Sarvam AI (sarvam_stt.cpp /
+// sarvam_tts.cpp) is now the ACTIVE provider but is not implemented yet, so it
+// degrades gracefully until the API integration lands. Selecting a provider
+// that is not yet implemented resolves to a "Not Implemented" module.
+//======================================================
 
-#define GOOGLE_TTS_URL \
-"https://texttospeech.googleapis.com/v1/text:synthesize"
+enum class SpeechProvider : uint8_t {
+    SARVAM,     // Sarvam AI Speech-to-Text (active placeholder, not implemented)
+    DEEPGRAM,   // Deepgram (planned, not implemented)
+    LOCAL       // Local/on-device recognition (planned, not implemented)
+};
+
+enum class TTSProvider : uint8_t {
+    SARVAM,     // Sarvam AI Text-to-Speech (active placeholder, not implemented)
+    ELEVENLABS, // ElevenLabs (planned, not implemented)
+    PIPER       // Piper local TTS (planned, not implemented)
+};
+
+#define DEFAULT_SPEECH_PROVIDER SpeechProvider::SARVAM
+#define DEFAULT_TTS_PROVIDER    TTSProvider::SARVAM
+
+// Sarvam AI base URL - the SarvamClient connects here over HTTPS (TLS 1.2).
+#define SARVAM_BASE_URL \
+"https://api.sarvam.ai"
+
+// Sarvam AI API request paths (documented REST endpoints).
+#define SARVAM_STT_PATH          "/v1/speech-to-text/transcribe"
+#define SARVAM_TTS_PATH          "/v1/text-to-speech"
+
+// Sarvam AI STT/TTS models and defaults.
+#define SARVAM_STT_MODEL         "saarika:v2"
+#define SARVAM_TTS_MODEL         "bulbul:v1"
+
+// Language code sent to the Sarvam API (override at runtime via setLanguage).
+// Sarvam supports Indian languages; "en-IN" (Indian English) and "hi-IN"
+// (Hindi) map to the spoken language AURA transcribes and speaks by default.
+#define SARVAM_LANGUAGE          "en-IN"
+
+// Default TTS speaker (Sarvam provides a set of named voices: meera, pavithra,
+// bhoomi, arjun, ...). Overridable at runtime via setVoice().
+#define SARVAM_VOICE             "meera"
+
+// Sample rate for transcription uploads (PCM captured at 16 kHz mono).
+#define SARVAM_SAMPLE_RATE       16000U
+// Sample rate requested from the TTS API for synthesized audio.
+#define SARVAM_TTS_SAMPLE_RATE   16000U
+#define SARVAM_CHANNELS          1
+#define SARVAM_BITS_PER_SAMPLE   16
+
+// Request timeouts and retry budget for Sarvam AI calls.
+#define SARVAM_TIMEOUT_MS        15000UL
+#define SARVAM_RETRY_MAX         3
+#define SARVAM_RETRY_BASE_DELAY_MS 500UL
+#define SARVAM_RETRY_MAX_DELAY_MS  8000UL
+
+// Capture limits (heap budget on a 4 MB ESP32).
+#define SARVAM_MAX_AUDIO_BYTES   176000UL   // ~5.5 s of 16 kHz 16-bit PCM
+#define SARVAM_MAX_TTS_BASE64    245760UL   // cap holding raw base64 before decode
+#define SARVAM_TTS_STREAM_CHUNK  512UL      // bytes decoded+played per loop tick
 
 //======================================================
 // AUDIO FOLDER

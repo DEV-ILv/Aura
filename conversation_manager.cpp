@@ -1,6 +1,7 @@
 #include "conversation_manager.h"
 #include "personality_manager.h"
 #include "led_ring.h"
+#include "aura_system.h"
 #include "sound_manager.h"
 #include "context_manager.h"
 #include "memory_manager.h"
@@ -12,8 +13,20 @@
 #include "workspace_manager.h"
 #include "event_bus.h"
 #include "study_manager.h"
+#include "assistant_output.h"
+#include "wifi_manager.h"
 
 ConversationManager conversationManager;
+
+namespace {
+// Forward hardware voice-activity alerts so the conversation manager can start
+// a conversation hands-free, the moment the user begins speaking.
+void ForwardVoiceDetectedEvent(const Event& e) {
+    if (e.type == EventType::VOICE_DETECTED) {
+        conversationManager.onVoiceDetected();
+    }
+}
+} // namespace
 
 ConversationManager::ConversationManager() noexcept
     : m_initialized(false)
@@ -45,6 +58,11 @@ ConversationManager::ConversationManager() noexcept
     , m_silentMode(false)
     , m_privacyMode(false)
     , m_quickCommandMode(false)
+    , m_setupMode(false)
+    , m_eventSubscribed(false)
+    , m_lastVoiceStartTime(0)
+    , m_lastWakeSource("boot")
+    , m_lastTouchEvent("none")
     , m_touchActive(false)
     , m_touchLastRaw(false)
     , m_touchDebounceStart(0)
@@ -101,6 +119,18 @@ bool ConversationManager::initialize() noexcept {
         speechToText.stopRecognition();
     }
 
+    // Voice-triggered wake: enable hardware VAD; it publishes VOICE_DETECTED
+    // on the event bus, which ensureEventSubscriptions() routes to onVoiceDetected().
+    if (audioManager.isInitialized()) {
+        audioManager.setVoiceActivityMonitoring(true);
+    }
+
+    // Default OLED state labels (personality may override these at runtime)
+    displayManager.setStateLabel(DisplayState::LISTENING, "Listening...");
+    displayManager.setStateLabel(DisplayState::THINKING, "Thinking...");
+    displayManager.setStateLabel(DisplayState::SPEAKING, "Speaking...");
+    displayManager.setStateLabel(DisplayState::HOME, "Ready");
+
     m_initialized = true;
     m_lastError = ConversationError::NONE;
     LOG_INFO("ConversationManager", "Initialized (push-to-talk mode, continuous=%s)",
@@ -110,6 +140,8 @@ bool ConversationManager::initialize() noexcept {
 
 void ConversationManager::run() noexcept {
     if (!m_initialized) return;
+
+    ensureEventSubscriptions();
 
     // Deferred settings restore (SettingsManager may init after us)
     if (!m_settingsRestored && settingsManager.isInitialized()) {
@@ -133,8 +165,10 @@ void ConversationManager::run() noexcept {
         m_lastActivityTime = now;
     }
 
-    // Double-tap pending timeout (first tap received, waiting for second)
-    if (m_doubleTapPending && (now - m_doubleTapStart > kDoubleTapWindowMs)) {
+    // Double-tap pending timeout (first tap received, waiting for second).
+    // Skipped while a finger is still down so a long/very-long press can take
+    // priority over the pending single tap.
+    if (m_doubleTapPending && !m_touchActive && (now - m_doubleTapStart > kDoubleTapWindowMs)) {
         m_doubleTapPending = false;
         handleTap();
     }
@@ -445,8 +479,8 @@ bool ConversationManager::checkAudioSignal() const noexcept {
 // ============================================================================
 
 void ConversationManager::processTouch() noexcept {
-    int touchValue = touchRead(TOUCH_PIN);
-    bool touched = (touchValue < SAFE_MODE_TOUCH_THRESHOLD);
+    // TTP223 touch sensor (digital, active-high)
+    bool touched = (digitalRead(TOUCH_PIN) == HIGH);
     unsigned long now = millis();
 
     // Debounce
@@ -473,45 +507,49 @@ void ConversationManager::processTouch() noexcept {
         }
 
         if (holdMs >= kVeryLongPressMs) {
-            handleVeryLongPress();     // >= 6s — Privacy Mode
+            m_doubleTapPending = false;
+            handleVeryLongPress();     // >= 5s — Setup Mode
         } else if (holdMs >= kLongPressMs) {
-            handleLongPress();         // >= 2.5s — Silent Mode
+            m_doubleTapPending = false;
+            handleLongPress();           // >= 2s — Microphone Mute
+        } else if (holdMs < kMinTapMs) {
+            // Accidental tap shorter than the debounce window: ignore it.
+            return;
         } else if (holdMs < kTapMaxMs) {
             // Quick tap — check for double-tap
             if (m_doubleTapPending && (now - m_doubleTapStart <= kDoubleTapWindowMs)) {
                 m_doubleTapPending = false;
-                handleDoubleTap();     // two quick taps — Quick Command
+                handleDoubleTap();     // two quick taps — Cancel response
             } else {
                 m_doubleTapPending = true;
                 m_doubleTapStart = now;
                 // handleTap() called on timeout or on next tap
             }
+        } else {
+            handleMediumHold();        // ~400ms..2s — dashboard on demand
         }
-        // Medium holds (between tap and long-press) are ignored
+        // Medium holds are otherwise used for the on-demand dashboard.
     }
 }
 
-// Legacy button press handler — called for single-tap
+// Single-tap button handler
 void ConversationManager::processButtonPress() noexcept {
+    // Ignore repeated single taps while already in a voice state
+    // (LISTENING/RECORDING=TRANSCRIBING/PROCESSING=THINKING/SPEAKING).
+    if (m_currentState == ConversationState::LISTENING ||
+        m_currentState == ConversationState::TRANSCRIBING ||
+        m_currentState == ConversationState::THINKING ||
+        m_currentState == ConversationState::SPEAKING) {
+        return;
+    }
+
+    // Muted (long press): ignore touch-to-listen until unmuted.
+    if (m_privacyMode) return;
+
     if (m_currentState == ConversationState::IDLE || m_currentState == ConversationState::COMPLETED) {
+        m_lastWakeSource = "touch";
         if (m_pushToTalkEnabled) startMic();
         startConversation();
-    } else if (m_currentState == ConversationState::SPEAKING && m_bargeInEnabled) {
-        textToSpeech.stop();
-        speechToText.cancelRecognition();
-        resetConversation();
-        if (m_followUpActive) endFollowUp();
-        m_endingByTap = false;
-        changeState(ConversationState::LISTENING);
-    } else if (m_currentState == ConversationState::LISTENING || m_currentState == ConversationState::TRANSCRIBING) {
-        speechToText.stopRecognition();
-        if (m_followUpActive) {
-            endFollowUp();
-            stopMic();
-            m_endingByTap = true;
-        } else {
-            m_endingByTap = m_pushToTalkEnabled && !m_continuousListeningEnabled;
-        }
     }
 }
 
@@ -520,19 +558,169 @@ void ConversationManager::processButtonPress() noexcept {
 // ============================================================================
 
 void ConversationManager::handleTap() noexcept {
+    m_lastTouchEvent = "single";
+    if (eventBus.isInitialized()) {
+        eventBus.publish(EventType::TOUCH_SINGLE, "ConversationManager", "");
+    }
     processButtonPress();
 }
 
+void ConversationManager::handleMediumHold() noexcept {
+    m_lastTouchEvent = "medium_hold";
+    // On-demand dashboard: toggle between the presence face and the widget dashboard.
+    if (displayManager.isDashboardActive()) {
+        displayManager.faceNotify(FaceEvent::TOUCH);
+        displayManager.showFace();
+    } else {
+        displayManager.showDashboard();
+    }
+}
+
 void ConversationManager::handleDoubleTap() noexcept {
-    enterQuickCommandMode();
+    m_lastTouchEvent = "double";
+    if (eventBus.isInitialized()) {
+        eventBus.publish(EventType::TOUCH_DOUBLE, "ConversationManager", "");
+    }
+    cancelActiveResponse();
 }
 
 void ConversationManager::handleLongPress() noexcept {
-    toggleSilentMode();
+    m_lastTouchEvent = "long";
+    if (eventBus.isInitialized()) {
+        eventBus.publish(EventType::TOUCH_LONG, "ConversationManager", "");
+    }
+    togglePrivacyMode();
 }
 
 void ConversationManager::handleVeryLongPress() noexcept {
-    togglePrivacyMode();
+    m_lastTouchEvent = "very_long";
+    enterSetupMode();
+}
+
+// ============================================================================
+// Response Cancellation
+// ============================================================================
+
+void ConversationManager::cancelActiveResponse() noexcept {
+    if (audioManager.isInitialized()) {
+        audioManager.cancelPlayback();
+    }
+    textToSpeech.stop();
+    speechToText.cancelRecognition();
+    geminiClient.cancelRequest();   // clear any queued AI request
+    // Stop recording immediately if a capture is in progress (double tap).
+    if (m_micActive) {
+        stopMic();
+    }
+    if (m_followUpActive) {
+        endFollowUp();
+    }
+    m_endingByTap = true;
+    resetConversation();
+    changeState(ConversationState::IDLE);
+    m_lastWakeSource = "";
+    LOG_INFO("ConversationManager", "Response cancelled (double tap)");
+}
+
+// ============================================================================
+// Setup Mode
+// ============================================================================
+
+bool ConversationManager::isSetupMode() const noexcept {
+    return m_setupMode;
+}
+
+void ConversationManager::enterSetupMode() noexcept {
+    if (m_setupMode) {
+        // Already in setup: toggle back out.
+        exitSetupMode();
+        return;
+    }
+    m_setupMode = true;
+    m_lastWakeSource = "setup";
+    if (eventBus.isInitialized()) {
+        eventBus.publish(EventType::ENTER_SETUP, "ConversationManager", "");
+    }
+    if (audioManager.isInitialized()) {
+        audioManager.setVoiceActivityMonitoring(false);
+    }
+    auraSystem.setMood(AuraMood::SETUP);             // purple
+    if (displayManager.isInitialized()) {
+        displayManager.pinStatus();
+        displayManager.showMessage("Setup Mode", "Wi-Fi provisioning");
+    }
+    if (!wifiManager.isAccessPointMode()) {
+        wifiManager.startAccessPoint(Secrets::AP_SSID, Secrets::AP_PASSWORD);
+    }
+    LOG_INFO("ConversationManager", "Entered setup mode (AP: %s)", Secrets::AP_SSID);
+}
+
+void ConversationManager::exitSetupMode() noexcept {
+    if (!m_setupMode) return;
+    m_setupMode = false;
+    if (wifiManager.isAccessPointMode()) {
+        wifiManager.stopAccessPoint();
+    }
+    if (audioManager.isInitialized()) {
+        audioManager.setVoiceActivityMonitoring(true);
+    }
+    auraSystem.enterIdle();
+    if (displayManager.isInitialized()) {
+        displayManager.unpinStatus();
+        displayManager.showFace();
+    }
+    LOG_INFO("ConversationManager", "Exited setup mode");
+}
+
+// ============================================================================
+// Interaction telemetry (companion app)
+// ============================================================================
+
+const String& ConversationManager::getLastWakeSource() const noexcept {
+    return m_lastWakeSource;
+}
+
+const String& ConversationManager::getLastTouchEvent() const noexcept {
+    return m_lastTouchEvent;
+}
+
+unsigned long ConversationManager::getLastVoiceTimestampMs() const noexcept {
+    return m_lastVoiceStartTime;
+}
+
+// ============================================================================
+// Voice-Triggered Wake
+// ============================================================================
+
+void ConversationManager::ensureEventSubscriptions() noexcept {
+    if (m_eventSubscribed || !eventBus.isInitialized()) return;
+    eventBus.subscribe(EventType::VOICE_DETECTED, ForwardVoiceDetectedEvent,
+                       EventPriority::NORMAL_PRIORITY, "ConvManager-VAD");
+    m_eventSubscribed = true;
+}
+
+void ConversationManager::onVoiceDetected() noexcept {
+    if (!m_initialized || m_privacyMode || m_setupMode) return;
+    // The microphone must NOT continuously activate conversations. Hands-free
+    // start only runs when an explicit wake-word engine is enabled (architecture
+    // ready); otherwise the mic stays ready but only records after a touch.
+    if (!m_wakeWordEnabled) return;
+    // Only hands-free wake from an idle conversation.
+    if (m_currentState != ConversationState::IDLE && m_currentState != ConversationState::COMPLETED) {
+        return;
+    }
+    unsigned long now = millis();
+    // Debounce: ignore brief re-triggers of the same utterance.
+    if (m_lastVoiceStartTime != 0 && (now - m_lastVoiceStartTime) < kVoiceReTriggerDebounceMs) {
+        return;
+    }
+    m_lastVoiceStartTime = now;
+    m_lastWakeSource = "voice";
+    if (m_pushToTalkEnabled) {
+        startMic();
+    }
+    startConversation();
+    LOG_INFO("ConversationManager", "Voice-triggered wake");
 }
 
 // ============================================================================
@@ -575,11 +763,32 @@ void ConversationManager::setPrivacyMode(bool enabled) noexcept {
     if (m_privacyMode == enabled) return;
     m_privacyMode = enabled;
     if (enabled) {
+        m_lastWakeSource = "privacy";
+        // Stop any active conversation (recording, TTS, STT) and return to idle.
+        if (m_currentState != ConversationState::IDLE &&
+            m_currentState != ConversationState::COMPLETED &&
+            m_currentState != ConversationState::ERROR) {
+            cancelActiveResponse();
+        }
         stopMic();
         m_wakeWordEnabled = false;
-        // Disable recording and network requests
-        if (audioManager.isInitialized()) audioManager.stopRecording();
+        // Disable hardware voice-activity detection, recording, and network requests
+        if (audioManager.isInitialized()) {
+            audioManager.stopRecording();
+            audioManager.setVoiceActivityMonitoring(false);
+        }
         if (speechToText.isInitialized()) speechToText.stopRecognition();
+        auraSystem.privacy();
+        displayManager.setMicMuted(true);
+        displayManager.pinStatus();
+    } else {
+        // Re-enable hardware voice-activity detection so voice can wake the device
+        if (audioManager.isInitialized()) {
+            audioManager.setVoiceActivityMonitoring(true);
+        }
+        auraSystem.enterIdle();
+        displayManager.setMicMuted(false);
+        displayManager.unpinStatus();
     }
     if (settingsManager.isInitialized()) {
         settingsManager.setPrivacyMode(enabled);
@@ -592,7 +801,9 @@ void ConversationManager::setPrivacyMode(bool enabled) noexcept {
     }
     soundManager.playConfirmation();
     if (enabled) {
-        displayManager.showMessage("PRIVACY MODE", "Enabled");
+        displayManager.showMessage("Microphone Muted", "Tap and hold to unmute");
+    } else {
+        displayManager.showFace();
     }
     LOG_INFO("ConversationManager", "Privacy mode %s", enabled ? "enabled" : "disabled");
 }
@@ -686,6 +897,10 @@ void ConversationManager::wakeFromSleep() noexcept {
     if (!m_autoSleepActive) return;
     m_autoSleepActive = false;
     m_lastActivityTime = millis();
+    if (displayManager.isInitialized()) {
+        displayManager.faceNotify(FaceEvent::WAKE);
+        displayManager.wake();
+    }
     if (eventBus.isInitialized()) {
         eventBus.publish(EventType::AUTO_SLEEP_EXITED, "ConversationManager", "");
     }
@@ -739,6 +954,9 @@ void ConversationManager::startMic() noexcept {
         audioManager.startRecording();
     }
     m_micActive = true;
+    if (eventBus.isInitialized()) {
+        eventBus.publish(EventType::START_RECORDING, "ConversationManager", "");
+    }
     displayManager.setMicMuted(false);
     LOG_DEBUG("ConversationManager", "Mic started");
 }
@@ -752,6 +970,9 @@ void ConversationManager::stopMic() noexcept {
         speechToText.stopRecognition();
     }
     m_micActive = false;
+    if (eventBus.isInitialized()) {
+        eventBus.publish(EventType::STOP_RECORDING, "ConversationManager", "");
+    }
     displayManager.setMicMuted(true);
     LOG_DEBUG("ConversationManager", "Mic stopped");
 }
@@ -889,12 +1110,15 @@ void ConversationManager::clearHistory() noexcept {
 void ConversationManager::changeState(ConversationState newState) noexcept {
     if (m_currentState == newState) return;
 
+    // Forward chain: IDLE -> LISTENING -> TRANSCRIBING -> THINKING -> SPEAKING
+    // -> COMPLETED -> IDLE. Cancellation (double tap / mute) may return to
+    // IDLE from ANY active state, so column 0 (IDLE) is valid everywhere.
     static constexpr bool validTransition[8][8] = {
         {0,1,0,0,0,0,0,1},  // IDLE -> LISTENING, ERROR
-        {0,0,1,0,0,1,0,1},  // LISTENING -> TRANSCRIBING, PAUSED, COMPLETED, ERROR
-        {0,0,0,1,1,1,1,1},  // TRANSCRIBING -> THINKING, SPEAKING, PAUSED, COMPLETED, ERROR
-        {0,0,0,0,1,1,1,1},  // THINKING -> SPEAKING, PAUSED, COMPLETED, ERROR
-        {0,0,0,0,0,1,1,1},  // SPEAKING -> PAUSED, COMPLETED, ERROR
+        {1,0,1,0,0,1,0,1},  // LISTENING -> IDLE, TRANSCRIBING, PAUSED, COMPLETED, ERROR
+        {1,0,0,1,1,1,1,1},  // TRANSCRIBING -> IDLE, THINKING, SPEAKING, PAUSED, COMPLETED, ERROR
+        {1,0,0,0,1,1,1,1},  // THINKING -> IDLE, SPEAKING, PAUSED, COMPLETED, ERROR
+        {1,0,0,0,0,1,1,1},  // SPEAKING -> IDLE, PAUSED, COMPLETED, ERROR
         {1,1,0,1,1,0,0,1},  // PAUSED -> IDLE, LISTENING, THINKING, SPEAKING, ERROR
         {1,1,0,0,0,0,0,1},  // COMPLETED -> IDLE, LISTENING, ERROR
         {1,0,0,0,0,0,0,0}   // ERROR -> IDLE
@@ -1105,6 +1329,7 @@ void ConversationManager::handleTranscribing() noexcept {
             // Gemini unavailable or failed - try offline fallback
             if (tinyAIManager.process(enrichedPrompt, m_result.assistantText)) {
                 LOG_INFO("ConversationManager", "Offline AI responded");
+                AssistantOutput::route(m_result.assistantText);
                 if (m_autoSpeak && !m_result.assistantText.isEmpty()) {
                     changeState(ConversationState::SPEAKING);
                 } else {
@@ -1132,6 +1357,8 @@ void ConversationManager::handleTranscribing() noexcept {
 
         LOG_INFO("ConversationManager", "Gemini responded: %s", m_result.assistantText.c_str());
 
+        AssistantOutput::route(m_result.assistantText);
+
         if (m_autoSpeak && !m_result.assistantText.isEmpty()) {
             changeState(ConversationState::SPEAKING);
         } else {
@@ -1149,11 +1376,15 @@ void ConversationManager::handleThinking() noexcept {
 }
 
 void ConversationManager::handleSpeaking() noexcept {
+    const bool speakEnabled = settingsManager.isInitialized()
+        ? settingsManager.getOutputToSpeaker() : true;
+
     if (!m_ttsTriggered) {
-        // In silent mode, skip TTS and show response on display only
-        if (m_silentMode) {
-            LOG_INFO("ConversationManager", "Silent mode — skipping TTS, showing on display");
-            displayManager.showMessage("Response", m_result.assistantText, "");
+        // Skip TTS when the speaker output is disabled (output routing) or
+        // silent mode is active. OLED + Companion display is handled earlier
+        // by AssistantOutput::route().
+        if (m_silentMode || !speakEnabled) {
+            LOG_INFO("ConversationManager", "Speaker off — skipping TTS");
             m_ttsTriggered = true;
             return;
         }
@@ -1190,8 +1421,8 @@ void ConversationManager::handleSpeaking() noexcept {
         return;
     }
 
-    // Silent mode: skip TTS wait, go directly to completed
-    if (m_silentMode) {
+    // Skip TTS when speaker disabled / silent mode: go directly to completed
+    if (m_silentMode || !speakEnabled) {
         m_ttsTriggered = false;
         changeState(ConversationState::COMPLETED);
         return;
@@ -1434,10 +1665,43 @@ void ConversationManager::updateDisplay() noexcept {
             break;
     }
 
+    // Live mic/voice icon state (updates independently of the base screen).
+    MicStatus micStatus;
+    switch (m_currentState) {
+        case ConversationState::IDLE:
+        case ConversationState::COMPLETED:
+            micStatus = (m_privacyMode || m_setupMode || audioManager.isMuted())
+                        ? MicStatus::MUTED : MicStatus::IDLE;
+            break;
+        case ConversationState::LISTENING:
+            micStatus = MicStatus::LISTENING;
+            break;
+        case ConversationState::TRANSCRIBING:
+            micStatus = MicStatus::RECORDING;
+            break;
+        case ConversationState::THINKING:
+            micStatus = MicStatus::PROCESSING;
+            break;
+        case ConversationState::SPEAKING:
+            micStatus = MicStatus::SPEAKING;
+            break;
+        case ConversationState::ERROR:
+            micStatus = MicStatus::ERROR;
+            break;
+        default:
+            micStatus = MicStatus::IDLE;
+            break;
+    }
+    displayManager.setMicStatus(micStatus);
+
     if (targetState != lastDisplayState || forceUpdate) {
-        // Update LED ring state in sync with display
+        // Update aura (face + ring together) in sync with the display state.
         switch (targetState) {
             case DisplayState::HOME: {
+                if (m_privacyMode || m_setupMode) {
+                    // Muted/setup: keep the red/purple ring and status screen.
+                    break;
+                }
                 String pName = personalityManager.isInitialized()
                     ? personalityManager.getActiveProfile().name.c_str() : "";
                 String activity = contextManager.isInitialized()
@@ -1457,24 +1721,26 @@ void ConversationManager::updateDisplay() noexcept {
                 }
                 displayManager.updateHomeData(pName, activity, convCount, memCount, remCount);
                 displayManager.showHome();
-                ledRing.setState(LedState::READY);
+                auraSystem.enterIdle();
                 break;
             }
             case DisplayState::LISTENING:
-                displayManager.showListening();
-                ledRing.setState(LedState::LISTENING);
+                // Touch-triggered listening: solid green ring + "Listening...".
+                auraSystem.listen();
                 break;
             case DisplayState::THINKING:
-                displayManager.showThinking();
-                ledRing.setState(LedState::THINKING);
+                // Recording (mic/STT capture) is cyan; AI processing is yellow.
+                if (m_currentState == ConversationState::TRANSCRIBING) {
+                    auraSystem.record();
+                } else {
+                    auraSystem.think();
+                }
                 break;
             case DisplayState::SPEAKING:
-                displayManager.showSpeaking();
-                ledRing.setState(LedState::SPEAKING);
+                auraSystem.speak();
                 break;
             case DisplayState::ERROR:
-                displayManager.showError("Error", "Conversation failed");
-                ledRing.setState(LedState::ERROR);
+                auraSystem.error();
                 break;
             default:
                 break;

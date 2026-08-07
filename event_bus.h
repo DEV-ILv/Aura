@@ -51,6 +51,16 @@ enum class EventType : uint8_t {
     WAKE_WORD_FALSE_POSITIVE,
     WAKE_WORD_SENSITIVITY_CHANGED,
 
+    // Voice activity detection (VAD) events
+    VOICE_DETECTED,          ///< Speech threshold crossed on the passive mic
+    VOICE_ENDED,              ///< Speech dropped back below the threshold
+    START_RECORDING,          ///< Mic capture began
+    STOP_RECORDING,           ///< Mic capture ended
+    TOUCH_SINGLE,             ///< Single tap: wake + manual listening
+    TOUCH_DOUBLE,             ///< Double tap: cancel AI response + idle
+    TOUCH_LONG,               ///< Long press: toggle privacy mode
+    ENTER_SETUP,              ///< Very long press: enter provisioning/setup
+
     // ESP-NOW events
     ESPNOW_NODE_DISCOVERED,
     ESPNOW_NODE_PAIRED,

@@ -5,7 +5,7 @@
 #include <vector>
 #include <ctime>
 #include "storage_manager.h"
-#include "text_to_speech.h"
+#include "sarvam_tts.h"
 #include "display_manager.h"
 #include "conversation_manager.h"
 #include "config.h"

@@ -1,7 +1,8 @@
-#include "startup_greeting_manager.h"
-#include "text_to_speech.h"
+﻿#include "startup_greeting_manager.h"
+#include "sarvam_tts.h"
 #include "wifi_manager.h"
 #include "storage_manager.h"
+#include "aura_system.h"
 
 StartupGreetingManager startupGreetingManager;
 
@@ -47,6 +48,7 @@ void StartupGreetingManager::update() noexcept {
                 m_phase = GreetingPhase::COMPLETED;
                 m_active = false;
                 displayManager.showHome();
+                auraSystem.enterIdle();
                 LOG_INFO(kLogCategory, "Startup greeting complete (no speech)");
             }
             m_startTime = now;
@@ -55,9 +57,10 @@ void StartupGreetingManager::update() noexcept {
 
     if (m_phase == GreetingPhase::SPEAKING) {
         if (!textToSpeech.isBusy()) {
-            m_phase = GreetingPhase::COMPLETED;
+m_phase = GreetingPhase::COMPLETED;
             m_active = false;
             displayManager.showHome();
+            auraSystem.enterIdle();
             LOG_INFO(kLogCategory, "Startup greeting complete");
         }
     }
@@ -316,3 +319,4 @@ String StartupGreetingManager::getStorageStatus() noexcept {
     }
     return "Storage: N/A";
 }
+

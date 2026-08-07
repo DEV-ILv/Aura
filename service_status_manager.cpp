@@ -3,6 +3,8 @@
 #include <WiFi.h>
 #include <esp_system.h>
 #include "performance_manager.h"
+#include "conversation_manager.h"
+#include "audio_manager.h"
 
 /// Global ServiceStatusManager instance
 ServiceStatusManager serviceStatusManager;
@@ -207,6 +209,24 @@ String ServiceStatusManager::getStatusJson(uint32_t requestCount) const noexcept
     json += String(flashTotal);
     json += ",\"requests\":";
     json += String(requestCount);
+    json += ",\"conversation\":{";
+    json += "\"state\":";
+    json += String(static_cast<int>(conversationManager.getState()));
+    json += ",\"privacy\":";
+    json += conversationManager.isPrivacyMode() ? "true" : "false";
+    json += ",\"listening\":";
+    json += (conversationManager.getState() == ConversationState::LISTENING) ? "true" : "false";
+    json += ",\"speaking\":";
+    json += (conversationManager.getState() == ConversationState::SPEAKING) ? "true" : "false";
+    json += ",\"recording\":";
+    json += conversationManager.isMicActive() ? "true" : "false";
+    json += ",\"voice_active\":";
+    json += audioManager.isVoiceActive() ? "true" : "false";
+    json += ",\"mic_level\":";
+    json += String(static_cast<int>(audioManager.getAudioEnergy() * 100.0f));
+    json += ",\"wake_source\":\"";
+    json += conversationManager.getLastWakeSource();
+    json += "\"}";
     json += "}";
     return json;
 }

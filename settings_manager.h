@@ -24,6 +24,7 @@ struct Settings {
   // LED settings
   uint8_t ledBrightness;            ///< LED brightness (0-255)
   bool ledEnabled;                  ///< Enable/disable LEDs
+  uint8_t discoBrightness;          ///< Disco mode brightness (10-100)
   
   // Audio settings
   uint8_t volume;                   ///< Speaker volume (0-100)
@@ -39,6 +40,11 @@ struct Settings {
   // Interaction refinement settings
   bool silentMode;                  ///< Silent mode (no TTS, display only)
   bool privacyMode;                 ///< Privacy mode (no mic, no network)
+
+  // Output routing settings
+  bool outputToOled;                ///< Route assistant responses to the OLED display
+  bool outputToSpeaker;             ///< Route assistant responses to the speaker (TTS)
+  bool outputToCompanion;           ///< Route assistant responses to the Companion App
   bool nightModeEnabled;            ///< Enable night mode schedule
   uint8_t nightModeStartHour;       ///< Night mode start hour (0-23)
   uint8_t nightModeStartMinute;     ///< Night mode start minute (0-59)
@@ -262,6 +268,19 @@ public:
    */
   [[nodiscard]] bool setLedEnabled(bool enabled) noexcept;
 
+  /**
+   * @brief Get Disco mode brightness
+   * @return Brightness value (10-100)
+   */
+  [[nodiscard]] uint8_t getDiscoBrightness() const noexcept;
+
+  /**
+   * @brief Set Disco mode brightness
+   * @param brightness Brightness value (10-100)
+   * @return true if set successfully, false otherwise
+   */
+  [[nodiscard]] bool setDiscoBrightness(uint8_t brightness) noexcept;
+
   // ========================================================================
   // AUDIO SETTINGS GETTERS/SETTERS
   // ========================================================================
@@ -338,6 +357,49 @@ public:
    * @return true if set successfully
    */
   [[nodiscard]] bool setSilentMode(bool enabled) noexcept;
+
+  // ========================================================================
+  // OUTPUT ROUTING GETTERS/SETTERS
+  // ========================================================================
+
+  /**
+   * @brief Whether assistant responses are routed to the OLED display
+   * @return true if OLED output is enabled
+   */
+  [[nodiscard]] bool getOutputToOled() const noexcept;
+
+  /**
+   * @brief Set OLED output routing
+   * @param enabled Enable or disable OLED output
+   * @return true if set successfully
+   */
+  [[nodiscard]] bool setOutputToOled(bool enabled) noexcept;
+
+  /**
+   * @brief Whether assistant responses are routed to the speaker (TTS)
+   * @return true if speaker output is enabled
+   */
+  [[nodiscard]] bool getOutputToSpeaker() const noexcept;
+
+  /**
+   * @brief Set speaker output routing
+   * @param enabled Enable or disable speaker output
+   * @return true if set successfully
+   */
+  [[nodiscard]] bool setOutputToSpeaker(bool enabled) noexcept;
+
+  /**
+   * @brief Whether assistant responses are routed to the Companion App
+   * @return true if Companion App output is enabled
+   */
+  [[nodiscard]] bool getOutputToCompanion() const noexcept;
+
+  /**
+   * @brief Set Companion App output routing
+   * @param enabled Enable or disable Companion App output
+   * @return true if set successfully
+   */
+  [[nodiscard]] bool setOutputToCompanion(bool enabled) noexcept;
 
   /**
    * @brief Get privacy mode state

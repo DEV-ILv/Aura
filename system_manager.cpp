@@ -1,18 +1,22 @@
-#include "system_manager.h"
+﻿#include "system_manager.h"
 #include "config.h"
 #include "logger.h"
 #include "storage_manager.h"
 #include "wifi_manager.h"
 #include "display_manager.h"
 #include "audio_manager.h"
-#include "speech_to_text.h"
+#include "sarvam_stt.h"
 #include "gemini_client.h"
-#include "text_to_speech.h"
+#include "sarvam_tts.h"
+#include "speech_provider.h"
+#include "tts_provider.h"
 #include "conversation_manager.h"
 #include "reminder_manager.h"
 #include "ota_manager.h"
 #include "web_portal.h"
 #include "led_ring.h"
+#include "aura_system.h"
+#include "uptime_monitor.h"
 #include "settings_manager.h"
 #include "sound_manager.h"
 #include "memory_manager.h"
@@ -228,12 +232,13 @@ bool SystemManager::initialize() noexcept {
         changeState(SystemState::ERROR);
         setError(SystemError::INIT_FAILED);
         displayManager.showError("SYSTEM ERROR", "See Serial Monitor");
+        auraSystem.critical();
         return false;
     }
 
     m_initialized = true;
 
-    // Clear boot loop counter — we booted successfully
+    // Clear boot loop counter â€” we booted successfully
     crashManager.clearBootLoopCounter();
 
     validateCredentials();
@@ -337,6 +342,7 @@ void SystemManager::shutdown() noexcept {
     wifiManager.disconnect();
     storageManager.unmountSPIFFS();
     storageManager.unmountSD();
+    uptimeMonitor.persist();
 
     Logger::info(kLogCategory, "Shutdown complete");
 }
@@ -403,6 +409,7 @@ void SystemManager::exitLowPower() noexcept {
     // Wake display
     displayManager.wake();
     displayManager.showHome();
+    auraSystem.wake();
 
     changeState(SystemState::READY);
 }
@@ -519,8 +526,28 @@ void SystemManager::setError(SystemError error) noexcept {
     Logger::error(kLogCategory, "Error: %d", static_cast<int>(error));
 }
 
+static unsigned long s_bootStageStartMs = 0;
+static unsigned long s_bootStageLastLogMs = 0;
+
+// Feed the task watchdog on boot progress and log the elapsed boot time so a
+// slow-but-healthy init sequence never trips the (tighter) core watchdog.
+// A genuinely stuck module never reaches this point, so the 30s app backstop
+// still fires and reboots instead of hanging forever.
+static void bootProgressWdt() noexcept {
+    if (esp_task_wdt_status(nullptr) == ESP_OK) {
+        esp_task_wdt_reset();
+    }
+    unsigned long now = millis();
+    if (now - s_bootStageLastLogMs >= 25) {
+        Logger::info("SystemManager", "[boot +%lu ms]", now - s_bootStageStartMs);
+        s_bootStageLastLogMs = now;
+    }
+}
+
 bool SystemManager::initializeModules() noexcept {
     m_moduleInitStartTime = millis();
+    s_bootStageStartMs = m_moduleInitStartTime;
+    s_bootStageLastLogMs = s_bootStageStartMs;
 
     // Headless development mode: force from config before probing hardware.
     // Auto-detection (HEADLESS_MODE_AUTO) is applied when the display probe
@@ -532,6 +559,10 @@ bool SystemManager::initializeModules() noexcept {
         Logger::info(kLogCategory, "Headless mode forced by config");
     }
 
+    // TTP223 touch sensor (digital, active-high) on TOUCH_PIN.
+    // INPUT_PULLDOWN keeps the pin at a known "released" state when idle.
+    pinMode(TOUCH_PIN, INPUT_PULLDOWN);
+
     // Check for safe mode (touch held during boot OR boot loop detected)
     // Non-blocking: poll with yield() instead of delay()
     if (!m_safeMode && !m_headless) {
@@ -539,7 +570,7 @@ bool SystemManager::initializeModules() noexcept {
         unsigned long touchCount = 0;
         unsigned long touchSamples = 0;
         while (millis() - touchStart < SAFE_MODE_TOUCH_HOLD_MS) {
-            if (touchRead(TOUCH_PIN) < SAFE_MODE_TOUCH_THRESHOLD) {
+            if (digitalRead(TOUCH_PIN) == HIGH) {
                 touchCount++;
             }
             touchSamples++;
@@ -574,6 +605,7 @@ bool SystemManager::initializeModules() noexcept {
     }
     serviceStatusManager.setStatus(ServiceId::SVC_SD_CARD,
         storageManager.isSDMounted() ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
+    bootProgressWdt();
     m_initModuleIndex = 1;
 
     // 2. MemoryManager (needs StorageManager)
@@ -583,6 +615,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[12]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 2;
 
     // 2b. Service Framework (foundational)
@@ -634,6 +667,7 @@ bool SystemManager::initializeModules() noexcept {
             }
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 3;
 
     // 4. WiFiManager (needed by network modules)
@@ -675,6 +709,7 @@ bool SystemManager::initializeModules() noexcept {
         }
     }
 
+    bootProgressWdt();
     m_initModuleIndex = 4;
 
     // 5. AudioManager
@@ -691,37 +726,53 @@ bool SystemManager::initializeModules() noexcept {
         serviceStatusManager.setStatus(ServiceId::SVC_MICROPHONE,
             audioManager.isInitialized() ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
         serviceStatusManager.setStatus(ServiceId::SVC_SPEAKER,
-            audioManager.isInitialized() ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
+            (AURA_HW_SPEAKER_PRESENT && audioManager.isInitialized())
+                ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
     }
+    if (!AURA_HW_SPEAKER_PRESENT) {
+        Logger::info(kLogCategory, "Speaker OFFLINE (hardware not connected)");
+    }
+    bootProgressWdt();
     m_initModuleIndex = 5;
 
     // 6. LedRing (visual feedback, independent)
-    if (!m_safeMode && !m_headless) {
+    if (!m_safeMode && !m_headless && AURA_HW_LED_RING_PRESENT) {
         Logger::info(kLogCategory, "Initializing: %s", kModuleNames[13]);
         ledRing.initialize();
         Logger::info(kLogCategory, "Initialized: %s", kModuleNames[13]);
+    } else if (!AURA_HW_LED_RING_PRESENT && !m_headless) {
+        Logger::info(kLogCategory, "LedRing OFFLINE (hardware not connected)");
     }
+    auraSystem.initialize();
     serviceStatusManager.setStatus(ServiceId::SVC_LED_RING,
-        m_headless ? ServiceStatus::SS_DISABLED : ServiceStatus::SS_ONLINE);
+        m_headless ? ServiceStatus::SS_DISABLED
+                   : (AURA_HW_LED_RING_PRESENT ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE));
     serviceStatusManager.setStatus(ServiceId::SVC_TOUCH,
         m_headless ? ServiceStatus::SS_DISABLED : ServiceStatus::SS_ONLINE);
+    bootProgressWdt();
     m_initModuleIndex = 6;
 
     // 7. SoundManager (needs AudioManager)
-    if (!m_safeMode && !m_headless) {
+    if (!m_safeMode && !m_headless && AURA_HW_SPEAKER_PRESENT) {
         Logger::info(kLogCategory, "Initializing: %s", kModuleNames[11]);
         if (!soundManager.initialize()) {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[11]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 7;
 
-    // 7.5 AudioAssetManager (needs StorageManager + AudioManager)
-    if (!m_safeMode) {
+    // 7.5 AudioAssetManager (needs StorageManager + AudioManager + speaker)
+    // Gated on speaker presence: its SD-backed cache directories stall boot on
+    // boards whose SD card SPI stops responding (task watchdog abort), so it is
+    // only enabled when there is actually an audio output to drive.
+    if (!m_safeMode && AURA_HW_SPEAKER_PRESENT) {
         Logger::info(kLogCategory, "Initializing: AudioAssetManager");
         if (!AudioAssetManager::instance().begin()) {
             Logger::warning(kLogCategory, "Failed to initialize AudioAssetManager (continuing)");
         }
+    } else if (!AURA_HW_SPEAKER_PRESENT) {
+        Logger::info(kLogCategory, "AudioAssetManager OFFLINE (no speaker connected)");
     }
 
     // 8. WebPortal (needs WiFi)
@@ -735,6 +786,7 @@ bool SystemManager::initializeModules() noexcept {
     serviceStatusManager.setStatus(ServiceId::SVC_REST, ServiceStatus::SS_ONLINE);
     serviceStatusManager.setStatus(ServiceId::SVC_WEBSOCKET, ServiceStatus::SS_ONLINE);
     displayManager.showBoot(70);
+    bootProgressWdt();
     m_initModuleIndex = 8;
 
     // 9. SpeechToText (needs WiFi)
@@ -744,6 +796,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[4]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 9;
 
     // 10. GeminiClient (needs WiFi)
@@ -753,6 +806,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[5]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 10;
 
     // 11. TextToSpeech (needs WiFi + Audio)
@@ -762,7 +816,19 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[6]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 11;
+
+    // Voice provider selection (Sarvam-ready). Sarvam AI is the active
+    // placeholder provider until the integration lands; the factory never
+    // returns a hardcoded provider into the rest of the codebase.
+    if (!m_safeMode) {
+        SpeechToTextProvider* sttProvider = createSpeechToTextProvider(DEFAULT_SPEECH_PROVIDER);
+        TextToSpeechProvider* ttsProvider = createTextToSpeechProvider(DEFAULT_TTS_PROVIDER);
+        Logger::info(kLogCategory, "Voice providers: STT=%s TTS=%s",
+                     sttProvider ? sttProvider->providerName() : "none",
+                     ttsProvider ? ttsProvider->providerName() : "none");
+    }
 
     // 12. ConversationManager (needs STT, Gemini, TTS)
     if (!m_safeMode) {
@@ -771,6 +837,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[7]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 12;
 
     // 13. ReminderManager
@@ -780,6 +847,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[8]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 13;
 
     // 14. OtaManager
@@ -787,6 +855,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!otaManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[9]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 14;
 
     if (m_safeMode) {
@@ -804,6 +873,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[14]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 15;
 
     // 16. PluginManager (needs SD card via StorageManager)
@@ -811,6 +881,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!pluginManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[15]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 16;
 
     // 17. SkillManager (needs StorageManager)
@@ -818,6 +889,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!skillManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[16]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 17;
 
     // 18. PersonalityManager (standalone, no hard deps)
@@ -825,6 +897,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!personalityManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[17]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 18;
 
     // 19. ContextManager (depends on many managers being up)
@@ -832,10 +905,12 @@ bool SystemManager::initializeModules() noexcept {
     if (!contextManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[18]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 19;
 
     // 20. (merged into BriefingManager)
     Logger::info(kLogCategory, "Skipping: %s", kModuleNames[19]);
+    bootProgressWdt();
     m_initModuleIndex = 20;
 
     // 21. PerformanceManager (standalone monitor)
@@ -843,6 +918,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!performanceManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[20]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 21;
 
     // 22. CrashManager (needs StorageManager)
@@ -850,13 +926,18 @@ bool SystemManager::initializeModules() noexcept {
     if (!crashManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[21]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 22;
+
+    // 22.5 UptimeMonitor (standalone, NVS-backed)
+    uptimeMonitor.begin();
 
     // 23. DiagnosticsManager (standalone)
     Logger::info(kLogCategory, "Initializing: %s", kModuleNames[22]);
     if (!diagnosticsManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[22]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 23;
 
     // 24. KnowledgeGraphManager
@@ -864,6 +945,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!knowledgeGraphManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[23]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 24;
 
     // 25. GoalManager
@@ -871,6 +953,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!goalManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[24]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 25;
 
     // 26. HabitManager
@@ -878,6 +961,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!habitManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[25]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 26;
 
     // 27. PlannerManager
@@ -885,6 +969,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!plannerManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[26]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 27;
 
     // 28. FunctionRouter
@@ -892,6 +977,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!functionRouter.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[27]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 28;
 
     // 29. ReflectionManager
@@ -899,6 +985,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!reflectionManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[28]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 29;
 
     // 30. AutomationManager
@@ -906,10 +993,12 @@ bool SystemManager::initializeModules() noexcept {
     if (!automationManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[29]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 30;
 
     // 31. (merged into BriefingManager)
     Logger::info(kLogCategory, "Skipping: %s", kModuleNames[19]);
+    bootProgressWdt();
     m_initModuleIndex = 31;
 
     // 32. StartupGreetingManager
@@ -919,6 +1008,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize StartupGreetingManager");
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 32;
 
     // 33. TinyAIManager (offline fallback - always available)
@@ -926,6 +1016,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!tinyAIManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[30]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 33;
 
     // 34. TimelineManager (needs StorageManager)
@@ -933,6 +1024,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!timelineManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[31]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 34;
 
     // 35. BriefingManager (needs TimelineManager, StorageManager)
@@ -940,6 +1032,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!briefingManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[32]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 35;
 
     // 36. SemanticSearchManager (no storage deps, queries other managers)
@@ -947,6 +1040,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!semanticSearchManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[33]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 36;
 
     // 37. DecisionManager
@@ -954,6 +1048,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!decisionManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[34]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 37;
 
     // 38. LearningManager
@@ -961,6 +1056,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!learningManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[35]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 38;
 
     // 40. PredictionManager
@@ -968,6 +1064,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!predictionManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[37]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 40;
 
     // 41. DocumentManager
@@ -975,6 +1072,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!documentManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[38]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 41;
 
     // 42. WorkspaceManager
@@ -982,6 +1080,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!workspaceManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[39]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 42;
 
     // 43. VaultManager
@@ -989,6 +1088,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!vaultManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[40]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 43;
 
     // 44. EventBus
@@ -999,6 +1099,7 @@ bool SystemManager::initializeModules() noexcept {
             return false;
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 44;
 
     // 45. StudyManager
@@ -1008,6 +1109,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[42]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 45;
 
     // 46. CompanionManager
@@ -1017,6 +1119,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[43]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 46;
 
     // 47. EspNowManager (needs WiFi)
@@ -1026,6 +1129,7 @@ bool SystemManager::initializeModules() noexcept {
             Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[44]);
         }
     }
+    bootProgressWdt();
     m_initModuleIndex = 47;
 
     // 48. HealthMonitor
@@ -1033,6 +1137,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!healthMonitor.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[45]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 48;
 
     // 49. SmartSearch
@@ -1040,6 +1145,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!smartSearch.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[46]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 49;
 
     // 50. AnalyticsManager
@@ -1047,6 +1153,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!analyticsManager.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[47]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 50;
 
     // 51. DeviceMesh
@@ -1054,6 +1161,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!deviceMesh.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[48]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 51;
 
     // 52. ExecutiveAssistant
@@ -1061,6 +1169,7 @@ bool SystemManager::initializeModules() noexcept {
     if (!executiveAssistant.initialize()) {
         Logger::warning(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[49]);
     }
+    bootProgressWdt();
     m_initModuleIndex = 52;
 
     // 53. New OS services
@@ -1112,7 +1221,7 @@ void SystemManager::updateModules() noexcept {
     wifiManager.update();
     displayManager.update();
     audioManager.update();
-    ledRing.update();
+    auraSystem.update();
     soundManager.update();
     memoryManager.update();
     settingsManager.update();
@@ -1122,6 +1231,7 @@ void SystemManager::updateModules() noexcept {
     conversationManager.update();
     reminderManager.update();
     otaManager.update();
+    uptimeMonitor.update();
     webPortal.update();
 
     uiFramework.update();
@@ -1266,6 +1376,8 @@ void SystemManager::monitorOTA() noexcept {
     if (otaManager.isBusy()) {
         m_info.otaRunning = true;
         if (otaManager.getState() == OTAState::DOWNLOADING) {
+            auraSystem.setMood(AuraMood::OTA);
+            auraSystem.setOtaProgress(otaManager.getProgress());
             displayManager.showOTAProgress(otaManager.getProgress());
         }
     } else {
@@ -1352,8 +1464,7 @@ void SystemManager::validateCredentials() noexcept {
     };
 
     warnIfMissing("Secrets::GEMINI_API_KEY", Secrets::GEMINI_API_KEY);
-    warnIfMissing("Secrets::GOOGLE_STT_API_KEY", Secrets::GOOGLE_STT_API_KEY);
-    warnIfMissing("Secrets::GOOGLE_TTS_API_KEY", Secrets::GOOGLE_TTS_API_KEY);
+    warnIfMissing("Secrets::SARVAM_API_KEY", Secrets::SARVAM_API_KEY);
     warnIfMissing("Secrets::AP_SSID", Secrets::AP_SSID);
     warnIfMissing("Secrets::AP_PASSWORD", Secrets::AP_PASSWORD);
     warnIfMissing("Secrets::WEB_USERNAME", Secrets::WEB_USERNAME);

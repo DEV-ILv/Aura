@@ -9,6 +9,23 @@
 secrets.h
 secrets.h.bak
 
+# Environment / credential files (defence in depth even if unused by the build)
+.env
+.env.*
+!.env.example
+.credentials
+*.credentials.json
+credentials.json
+service-account.json
+service-account*.json
+firebase-adminsdk*.json
+google-services.json
+GoogleService-Info.plist
+local.properties
+*.sqlite
+*.sqlite3
+*.db
+
 # Signing/private key material (tools/generate_keypair output).
 # Only the PUBLIC key (firmware_keys.h / keys/public.h) is ever committed.
 keys/
@@ -17,16 +34,23 @@ keys/
 *.p12
 *.pfx
 *.csr
+*.crt
+*.pem.bak
 
 # OTA / build output
 build/
 dist/
 out/
+node_modules/
+__pycache__/
+*.pyc
 *.bin
 *.elf
 *.map
 *.log
 *.hex
+*.tmp
+*.bak
 sig*.txt
 
 # IDE / editor

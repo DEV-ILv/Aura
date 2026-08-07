@@ -241,6 +241,15 @@ public:
      */
     [[nodiscard]] String getHostname() const noexcept;
 
+    /**
+     * @brief Broadcast an `assistant_response` payload to connected Companion
+     *        App clients.
+     * @param json Pre-built JSON message.
+     * @note Non-blocking. Safely drops when no client is connected; reconnects
+     *       are handled automatically by the underlying AsyncWebSocket.
+     */
+    void broadcastAssistantResponse(const String& json) noexcept;
+
 private:
     // Private helper methods
 
@@ -320,6 +329,12 @@ private:
      * Returns device status as JSON.
      */
     void handleApiStatus() noexcept;
+
+    /**
+     * @brief Handles /api/uptime REST endpoint.
+     * Returns session/lifetime uptime, boot count and reset reason as JSON.
+     */
+    void handleApiUptime() noexcept;
 
     /**
      * @brief Handles /api/wifi REST endpoint.
@@ -506,6 +521,18 @@ private:
 
     // Version
     void handleApiVersion() noexcept;
+
+    // V2 Companion Device Control API handlers
+    void handleApiWifiScan() noexcept;
+    void handleApiWifiForget() noexcept;
+    void handleApiDisplayControl() noexcept;
+    void handleApiLedControl() noexcept;
+    void handleApiAudioControl() noexcept;
+    void handleApiMicControl() noexcept;
+    void handleApiMicLevel() noexcept;
+
+    // SD diagnostics
+    void handleApiSdDiagnostics() noexcept;
 
     // Auth helpers
     bool isAuthenticated() noexcept;

@@ -7,6 +7,11 @@
 #include "service_status_manager.h"
 #include "storage_manager.h"
 #include "audio_manager.h"
+#include "display_manager.h"
+#include "settings_manager.h"
+#include "led_ring.h"
+#include "aura_system.h"
+#include "aura_mood.h"
 #include "conversation_manager.h"
 #include "esp_now_manager.h"
 #include "plugin_manager.h"
@@ -18,6 +23,7 @@
 
 #include "performance_manager.h"
 #include "crash_manager.h"
+#include "uptime_monitor.h"
 #include "diagnostics_manager.h"
 #include "memory_manager.h"
 #include "knowledge_graph_manager.h"
@@ -42,6 +48,11 @@
 #include "event_bus.h"
 #include "study_manager.h"
 #include "companion_manager.h"
+
+namespace {
+// Defined later in this translation unit; declared here for earlier call sites.
+const char* conversationStateToString(const ConversationState state) noexcept;
+}
 #include "reminder_manager.h"
 #include "json_helpers.h"
 
@@ -129,6 +140,12 @@ bool WebPortal::start() noexcept
         Logger::warning("WebPortal", "Server already running");
         return true;
     }
+
+    // Register the auth token header with the (ESP32 core) WebServer. Without
+    // this, _collectHeader() skips every non-listed header, so isAuthenticated()
+    // can never see "X-Auth-Token" and every authenticated route returns 401.
+    const char* authHeaderKeys[] = { "X-Auth-Token" };
+    m_server.collectHeaders(authHeaderKeys, 1);
 
     m_server.begin();
     m_webSocket.begin();
@@ -363,6 +380,7 @@ bool WebPortal::registerRoutes() noexcept
 bool WebPortal::registerApiRoutes() noexcept
 {
     m_server.on("/api/status", HTTP_GET, [this]() { handleApiStatus(); });
+    m_server.on("/api/uptime", HTTP_GET, [this]() { handleApiUptime(); });
     m_server.on("/api/wifi", HTTP_GET, [this]() { handleApiWifi(); });
     m_server.on("/api/wifi", HTTP_POST, [this]() { handleApiWifi(); });
     m_server.on("/api/settings", HTTP_GET, [this]() { handleApiSettings(); });
@@ -539,6 +557,20 @@ bool WebPortal::registerApiRoutes() noexcept
 
     // Version API
     m_server.on("/api/version", HTTP_GET, [this]() { handleApiVersion(); });
+
+    // V2 Companion Device Control API routes
+    m_server.on("/api/wifi/scan", HTTP_POST, [this]() { handleApiWifiScan(); });
+    m_server.on("/api/wifi/forget", HTTP_POST, [this]() { handleApiWifiForget(); });
+    m_server.on("/api/display/control", HTTP_GET, [this]() { handleApiDisplayControl(); });
+    m_server.on("/api/display/control", HTTP_POST, [this]() { handleApiDisplayControl(); });
+    m_server.on("/api/led/control", HTTP_GET, [this]() { handleApiLedControl(); });
+    m_server.on("/api/led/control", HTTP_POST, [this]() { handleApiLedControl(); });
+    m_server.on("/api/audio/control", HTTP_POST, [this]() { handleApiAudioControl(); });
+    m_server.on("/api/mic/control", HTTP_POST, [this]() { handleApiMicControl(); });
+    m_server.on("/api/mic/level", HTTP_GET, [this]() { handleApiMicLevel(); });
+
+    // SD diagnostics
+    m_server.on("/api/sd/diagnostics", HTTP_GET, [this]() { handleApiSdDiagnostics(); });
 
     Logger::info("WebPortal", "API routes registered");
     return true;
@@ -983,6 +1015,12 @@ void WebPortal::webSocketBroadcast(String json) noexcept {
     sendToAuthenticatedClients(json);
 }
 
+void WebPortal::broadcastAssistantResponse(const String& json) noexcept {
+    if (!m_running) return;
+    if (m_webSocket.connectedClients() == 0) return;  // drop safely if app disconnected
+    webSocketBroadcast(json);
+}
+
 void WebPortal::webSocketBroadcastDashboard() noexcept {
     if (!m_running || m_webSocket.connectedClients() == 0) return;
 
@@ -1004,8 +1042,24 @@ void WebPortal::webSocketBroadcastDashboard() noexcept {
     if (conversationManager.isInitialized()) {
         json += ",\"conversation\":{";
         json += "\"state\":" + String(static_cast<int>(conversationManager.getState()));
+        json += ",\"stateString\":\"" + String(conversationStateToString(conversationManager.getState())) + "\"";
         json += ",\"busy\":" + String(conversationManager.isBusy() ? "true" : "false");
         json += ",\"wakeWord\":" + String(conversationManager.isWakeWordEnabled() ? "true" : "false");
+        json += ",\"privacy\":" + String(conversationManager.isPrivacyMode() ? "true" : "false");
+        json += ",\"muted\":" + String(conversationManager.isPrivacyMode() ? "true" : "false");
+        json += ",\"setup\":" + String(conversationManager.isSetupMode() ? "true" : "false");
+        json += ",\"listening\":" + String(conversationManager.getState() == ConversationState::LISTENING ? "true" : "false");
+        json += ",\"speaking\":" + String(conversationManager.getState() == ConversationState::SPEAKING ? "true" : "false");
+        json += ",\"processing\":" + String((conversationManager.getState() == ConversationState::TRANSCRIBING ||
+                                             conversationManager.getState() == ConversationState::THINKING) ? "true" : "false");
+        json += ",\"recording\":" + String(conversationManager.isMicActive() ? "true" : "false");
+        json += ",\"lastVoiceTimestamp\":" + String(conversationManager.getLastVoiceTimestampMs());
+        json += ",\"wakeSource\":\"" + conversationManager.getLastWakeSource() + "\"";
+        json += ",\"touch\":\"" + conversationManager.getLastTouchEvent() + "\"";
+        if (audioManager.isInitialized()) {
+            json += ",\"voiceActive\":" + String(audioManager.isVoiceActive() ? "true" : "false");
+            json += ",\"micLevel\":" + String(static_cast<int>(audioManager.getAudioEnergy() * 100.0f));
+        }
         json += "}";
     }
 
@@ -1019,6 +1073,13 @@ void WebPortal::webSocketBroadcastDashboard() noexcept {
     json += "\"freeHeap\":" + String(ESP.getFreeHeap());
     json += ",\"uptime\":" + String(millis() / 1000);
     json += ",\"wifiRSSI\":" + String(WiFi.RSSI());
+    json += "}";
+
+    // Disco Mode state (app always reflects whether it is active)
+    json += ",\"disco\":{";
+    json += "\"enabled\":" + String(ledRing.isDiscoEnabled() ? "true" : "false");
+    json += ",\"active\":" + String(ledRing.isDiscoActive() ? "true" : "false");
+    json += ",\"brightness\":" + String(static_cast<int>(settingsManager.getDiscoBrightness()));
     json += "}";
 
     json += "}";
@@ -1960,6 +2021,14 @@ void WebPortal::handleApiStatus() noexcept
     sendJson(json);
 }
 
+void WebPortal::handleApiUptime() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    sendJson(uptimeMonitor.toJson());
+}
+
 void WebPortal::handleApiWifi() noexcept
 {
     m_requestCounter++;
@@ -2015,6 +2084,450 @@ void WebPortal::handleApiWifi() noexcept
     }
 }
 
+// ============================================================================
+// V2 Companion Device Control handlers
+// ============================================================================
+
+namespace {
+
+const char* conversationStateToString(const ConversationState state) noexcept
+{
+    switch (state) {
+        case ConversationState::IDLE:         return "idle";
+        case ConversationState::LISTENING:    return "listening";
+        case ConversationState::TRANSCRIBING: return "transcribing";
+        case ConversationState::THINKING:     return "thinking";
+        case ConversationState::SPEAKING:     return "speaking";
+        case ConversationState::PAUSED:       return "paused";
+        case ConversationState::COMPLETED:    return "completed";
+        case ConversationState::ERROR:        return "error";
+        default:                              return "unknown";
+    }
+}
+
+const char* moodToName(const AuraMood mood) noexcept
+{
+    switch (mood) {
+        case AuraMood::IDLE:            return "idle";
+        case AuraMood::LISTENING:       return "listening";
+        case AuraMood::THINKING:        return "thinking";
+        case AuraMood::PROCESSING:      return "processing";
+        case AuraMood::SPEAKING:        return "speaking";
+        case AuraMood::HAPPY:           return "happy";
+        case AuraMood::SUCCESS:         return "success";
+        case AuraMood::REMINDER:        return "reminder";
+        case AuraMood::WARNING:         return "warning";
+        case AuraMood::ERROR:           return "error";
+        case AuraMood::CRITICAL:        return "critical";
+        case AuraMood::OTA:             return "ota";
+        case AuraMood::OFFLINE:         return "offline";
+        case AuraMood::SLEEP:           return "sleep";
+        case AuraMood::WAKE:            return "wake";
+        case AuraMood::WIFI_CONNECTING: return "wifi_connecting";
+        case AuraMood::WIFI_CONNECTED:  return "wifi_connected";
+        default:                        return "idle";
+    }
+}
+
+AuraMood nameToMood(const char* name) noexcept
+{
+    if (name == nullptr) return AuraMood::IDLE;
+    struct MoodEntry { const char* name; AuraMood mood; };
+    static const MoodEntry entries[] = {
+        {"idle", AuraMood::IDLE},
+        {"listening", AuraMood::LISTENING},
+        {"thinking", AuraMood::THINKING},
+        {"processing", AuraMood::PROCESSING},
+        {"speaking", AuraMood::SPEAKING},
+        {"happy", AuraMood::HAPPY},
+        {"success", AuraMood::SUCCESS},
+        {"reminder", AuraMood::REMINDER},
+        {"warning", AuraMood::WARNING},
+        {"error", AuraMood::ERROR},
+        {"critical", AuraMood::CRITICAL},
+        {"ota", AuraMood::OTA},
+        {"offline", AuraMood::OFFLINE},
+        {"sleep", AuraMood::SLEEP},
+        {"wake", AuraMood::WAKE},
+        {"wifi_connecting", AuraMood::WIFI_CONNECTING},
+        {"wifi_connected", AuraMood::WIFI_CONNECTED},
+    };
+    for (const MoodEntry& entry : entries) {
+        if (strcmp(entry.name, name) == 0) return entry.mood;
+    }
+    return AuraMood::IDLE;
+}
+
+String escapeJsonString(const String& value) noexcept
+{
+    String out;
+    out.reserve(value.length() + 8);
+    for (size_t i = 0; i < value.length(); ++i) {
+        const char c = value[i];
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;      break;
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+void WebPortal::handleApiWifiScan() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    const int16_t count = wifiManager.scanNetworks();
+    if (count < 0) {
+        sendError("Wi-Fi scan failed", 500);
+        return;
+    }
+
+    String json = "{\"networks\":[";
+    uint16_t shown = 0;
+    const uint16_t maxNetworks = 32;
+    for (int16_t i = 0; i < count && shown < maxNetworks; ++i) {
+        char ssid[64] = {0};
+        int32_t rssi = 0;
+        uint8_t channel = 0;
+        bool isOpen = false;
+        if (!wifiManager.getNetworkInfo(static_cast<uint16_t>(i), ssid, sizeof(ssid), rssi, channel, isOpen)) {
+            continue;
+        }
+        if (shown > 0) json += ',';
+        json += "{\"ssid\":\"";
+        json += escapeJsonString(ssid);
+        json += "\",\"rssi\":";
+        json += String(rssi);
+        json += ",\"channel\":";
+        json += String(channel);
+        json += ",\"open\":";
+        json += isOpen ? "true" : "false";
+        json += '}';
+        ++shown;
+    }
+    json += "]}";
+
+    sendJson(json);
+}
+
+void WebPortal::handleApiWifiForget() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    wifiManager.clearCredentials();
+    Logger::info("WebPortal", "Saved Wi-Fi credentials cleared via API");
+    sendSuccess("Saved Wi-Fi credentials cleared. Device will disconnect from known networks.");
+}
+
+void WebPortal::handleApiDisplayControl() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    if (m_server.method() == HTTP_GET) {
+        const bool poweredOn = displayManager.getState() != DisplayState::SLEEP;
+        char json[MAX_JSON_BUFFER];
+        snprintf(json, sizeof(json),
+            R"({"on":%s,"brightness":%u,"timeout":%u,"night_mode":%s})",
+            poweredOn ? "true" : "false",
+            settingsManager.getScreenBrightness(),
+            settingsManager.getScreenTimeout(),
+            settingsManager.getNightModeEnabled() ? "true" : "false");
+        sendJson(json);
+        return;
+    }
+
+    if (!m_server.hasArg("plain")) {
+        sendError("No JSON body provided", 400);
+        return;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, m_server.arg("plain"))) {
+        sendError("Invalid JSON", 400);
+        return;
+    }
+
+    if (doc["power"].is<bool>()) {
+        if (doc["power"].as<bool>()) {
+            displayManager.displayOn();
+        } else {
+            displayManager.displayOff();
+        }
+    }
+    if (doc["brightness"].is<int>()) {
+        const uint8_t brightness = static_cast<uint8_t>(constrain(doc["brightness"].as<int>(), 0, 255));
+        displayManager.setBrightness(brightness);
+        settingsManager.setScreenBrightness(brightness);
+    }
+    if (doc["invert"].is<bool>()) {
+        displayManager.setInverted(doc["invert"].as<bool>());
+    }
+    if (doc["rotation"].is<int>()) {
+        displayManager.setRotation(static_cast<uint8_t>(constrain(doc["rotation"].as<int>(), 0, 3)));
+    }
+    if (doc["timeout"].is<int>()) {
+        settingsManager.setScreenTimeout(static_cast<uint16_t>(constrain(doc["timeout"].as<int>(), 0, 3600)));
+    }
+    if (doc["text"].is<const char*>()) {
+        const char* text = doc["text"].as<const char*>();
+        if (text != nullptr && text[0] != '\0') {
+            displayManager.showNotification("AURA", text, 5000);
+        }
+    }
+    settingsManager.save();
+    sendSuccess("Display updated");
+}
+
+void WebPortal::handleApiLedControl() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    if (m_server.method() == HTTP_GET) {
+        const CRGB color = ledRing.getThemeColor();
+        const bool manual = ledRing.isManualControl();
+        const AuraMood mood = manual ? ledRing.getManualMood() : ledRing.getMood();
+        char json[MAX_JSON_BUFFER];
+        snprintf(json, sizeof(json),
+            R"({"enabled":%s,"brightness":%u,"mood":"%s","manual":%s,"color":{"r":%u,"g":%u,"b":%u},"disco":%s,"discoBrightness":%u,"discoActive":%s})",
+            ledRing.isEnabled() ? "true" : "false",
+            settingsManager.getLedBrightness(),
+            moodToName(mood),
+            manual ? "true" : "false",
+            color.r, color.g, color.b,
+            ledRing.isDiscoEnabled() ? "true" : "false",
+            settingsManager.getDiscoBrightness(),
+            ledRing.isDiscoActive() ? "true" : "false");
+        sendJson(json);
+        return;
+    }
+
+    if (!m_server.hasArg("plain")) {
+        sendError("No JSON body provided", 400);
+        return;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, m_server.arg("plain"))) {
+        sendError("Invalid JSON", 400);
+        return;
+    }
+
+    // Manual device-control commands open (or refresh) a temporary manual
+    // session: the ring obeys the user's selection until the session is
+    // disabled or auto-expires, then automatic idle behaviour (LED off)
+    // resumes.
+    bool anyCommand = false;
+    const bool manualRequested = doc["manual"].is<bool>()
+        ? doc["manual"].as<bool>() : true;
+
+    if (doc["enabled"].is<bool>()) {
+        anyCommand = true;
+        const bool enabled = doc["enabled"].as<bool>();
+        if (enabled) {
+            ledRing.turnOn();
+            if (manualRequested) ledRing.beginManualControl();
+        } else {
+            ledRing.endManualControl();
+            ledRing.turnOff();
+        }
+        settingsManager.setLedEnabled(enabled);
+    }
+    if (doc["brightness"].is<int>()) {
+        anyCommand = true;
+        const uint8_t brightness = static_cast<uint8_t>(constrain(doc["brightness"].as<int>(), 0, 255));
+        ledRing.setBrightness(brightness);
+        if (manualRequested) ledRing.beginManualControl();
+        settingsManager.setLedBrightness(brightness);
+    }
+    if (doc["mood"].is<const char*>()) {
+        anyCommand = true;
+        const char* moodName = doc["mood"].as<const char*>();
+        if (moodName != nullptr && moodName[0] != '\0') {
+            // Manual animation changes drive the ring directly (not the whole
+            // face+aura system) so a test never desyncs the OLED face.
+            ledRing.setManualMood(nameToMood(moodName));
+            if (manualRequested) ledRing.beginManualControl();
+        }
+    }
+    if (doc["r"].is<int>() && doc["g"].is<int>() && doc["b"].is<int>()) {
+        anyCommand = true;
+        const CRGB color(
+            static_cast<uint8_t>(constrain(doc["r"].as<int>(), 0, 255)),
+            static_cast<uint8_t>(constrain(doc["g"].as<int>(), 0, 255)),
+            static_cast<uint8_t>(constrain(doc["b"].as<int>(), 0, 255)));
+        ledRing.setThemeColor(color);
+        if (manualRequested) ledRing.beginManualControl();
+    }
+    // Disco Mode - Companion App only. Turning it on ends any manual test
+    // session so Disco owns the ring; turning it off restores the live mood.
+    if (doc["disco"].is<bool>()) {
+        anyCommand = true;
+        const bool disco = doc["disco"].as<bool>();
+        ledRing.setDiscoEnabled(disco);
+        ledRing.endManualControl();
+        Logger::info("WebPortal", "Disco Mode %s (app)", disco ? "enabled" : "disabled");
+    }
+    if (doc["discoBrightness"].is<int>()) {
+        anyCommand = true;
+        const uint8_t dbr = static_cast<uint8_t>(
+            constrain(doc["discoBrightness"].as<int>(), 10, 100));
+        ledRing.setDiscoBrightness(dbr);
+        settingsManager.setDiscoBrightness(dbr);
+    }
+    if (anyCommand) {
+        settingsManager.save();
+    }
+    sendSuccess("LED ring updated");
+}
+
+void WebPortal::handleApiAudioControl() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    if (!m_server.hasArg("plain")) {
+        sendError("No JSON body provided", 400);
+        return;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, m_server.arg("plain"))) {
+        sendError("Invalid JSON", 400);
+        return;
+    }
+
+    if (doc["volume"].is<int>()) {
+        const uint8_t volume = static_cast<uint8_t>(constrain(doc["volume"].as<int>(), 0, 100));
+        audioManager.setVolume(volume);
+        settingsManager.setVolume(volume);
+    }
+    if (doc["mute"].is<bool>()) {
+        const bool mute = doc["mute"].as<bool>();
+        if (mute) {
+            audioManager.mute();
+        } else {
+            audioManager.unmute();
+        }
+    }
+    if (doc["output_speaker"].is<bool>()) {
+        settingsManager.setOutputToSpeaker(doc["output_speaker"].as<bool>());
+    }
+    if (doc["test"].is<bool>() && doc["test"].as<bool>()) {
+        audioManager.playEarcon(1);
+    }
+    settingsManager.save();
+    sendSuccess("Audio updated");
+}
+
+void WebPortal::handleApiMicControl() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    if (!m_server.hasArg("plain")) {
+        sendError("No JSON body provided", 400);
+        return;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, m_server.arg("plain"))) {
+        sendError("Invalid JSON", 400);
+        return;
+    }
+
+    if (doc["calibrate"].is<bool>() && doc["calibrate"].as<bool>()) {
+        audioManager.calibrateNoiseFloor();
+        sendSuccess("Noise floor recalibrated");
+        return;
+    }
+
+    if (doc["gain"].is<int>()) {
+        const uint8_t gain = static_cast<uint8_t>(constrain(doc["gain"].as<int>(), 0, 100));
+        audioManager.setMicrophoneGain(gain);
+        settingsManager.setMicrophoneGain(gain);
+    }
+    settingsManager.save();
+    sendSuccess("Microphone updated");
+}
+
+void WebPortal::handleApiMicLevel() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    float energy = 0.0f;
+    float peak = 0.0f;
+    audioManager.sampleMicLevel(energy, peak);
+
+    char json[MAX_JSON_BUFFER];
+    snprintf(json, sizeof(json),
+        R"({"energy":%.3f,"peak":%.3f,"noise_floor":%u,"noise_threshold":%u,"recording":%s,"privacy":%s,"voice_active":%s,"vad_enabled":%s})",
+        static_cast<double>(energy),
+        static_cast<double>(peak),
+        audioManager.getNoiseFloor(),
+        audioManager.getNoiseThreshold(),
+        audioManager.isRecording() ? "true" : "false",
+        conversationManager.isPrivacyMode() ? "true" : "false",
+        audioManager.isVoiceActive() ? "true" : "false",
+        audioManager.isVoiceActivityMonitoringEnabled() ? "true" : "false");
+    sendJson(json);
+}
+
+void WebPortal::handleApiSdDiagnostics() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+
+    const bool initialized = storageManager.isInitialized();
+    const bool mounted = storageManager.isSDMounted();
+    const uint64_t cardSize = storageManager.getSDCardSize();
+    const uint32_t spiHz = storageManager.getSDSpiFrequencyHz();
+
+    size_t totalBytes = 0, usedBytes = 0, freeBytes = 0;
+    if (mounted) {
+        storageManager.getStatistics(StorageType::SD_CARD, totalBytes, usedBytes, freeBytes);
+    }
+
+    float readKBs = 0.0f, writeKBs = 0.0f;
+    if (mounted) {
+        float readBps = 0.0f, writeBps = 0.0f;
+        storageManager.runSDSpeedTest(readBps, writeBps);
+        readKBs = readBps / 1024.0f;
+        writeKBs = writeBps / 1024.0f;
+    }
+
+    String json;
+    json.reserve(512);
+    json += "{\"success\":true,";
+    json += "\"initialized\":" + String(initialized ? "true" : "false") + ",";
+    json += "\"card_detected\":" + String(mounted ? "true" : "false") + ",";
+    json += "\"card_type\":\"" + String(storageManager.getSDCardTypeName()) + "\",";
+    json += "\"capacity_bytes\":" + String(static_cast<unsigned long long>(cardSize)) + ",";
+    json += "\"capacity_mb\":" + String(static_cast<unsigned long long>(cardSize / (1024ULL * 1024ULL))) + ",";
+    json += "\"filesystem\":\"" + String(mounted ? "FAT32" : "none") + "\",";
+    json += "\"spi_frequency_hz\":" + String(spiHz) + ",";
+    json += "\"spi_frequency_mhz\":" + String(static_cast<float>(spiHz) / 1000000.0f, 1) + ",";
+    json += "\"cs_pin\":" + String(SD_CS_PIN) + ",";
+    json += "\"last_error\":\"" + escapeJson(String(storageManager.getSDLastError())) + "\",";
+    json += "\"free_space\":" + String(static_cast<unsigned long long>(freeBytes)) + ",";
+    json += "\"used_space\":" + String(static_cast<unsigned long long>(usedBytes)) + ",";
+    json += "\"total_space\":" + String(static_cast<unsigned long long>(totalBytes)) + ",";
+    json += "\"read_speed_kbs\":" + String(readKBs, 1) + ",";
+    json += "\"write_speed_kbs\":" + String(writeKBs, 1);
+    json += "}";
+    sendJson(json);
+}
+
 void WebPortal::handleApiSettings() noexcept
 {
     m_requestCounter++;
@@ -2025,11 +2538,14 @@ void WebPortal::handleApiSettings() noexcept
         String apiKeyStatus = geminiClient.hasApiKey() ? geminiClient.getMaskedApiKey() : "";
         char json[MAX_JSON_BUFFER];
         snprintf(json, sizeof(json),
-            R"({"device_name":"AURA","version":"1.0.0","api_key":"%s","has_key":%s,"build_date":"%s","build_time":"%s"})",
+            R"({"device_name":"AURA","version":"1.0.0","api_key":"%s","has_key":%s,"build_date":"%s","build_time":"%s","output_oled":%s,"output_speaker":%s,"output_companion":%s})",
             apiKeyStatus.isEmpty() ? "" : apiKeyStatus.c_str(),
             geminiClient.hasApiKey() ? "true" : "false",
             __DATE__,
-            __TIME__
+            __TIME__,
+            settingsManager.isInitialized() && settingsManager.getOutputToOled() ? "true" : "false",
+            settingsManager.isInitialized() && settingsManager.getOutputToSpeaker() ? "true" : "false",
+            settingsManager.isInitialized() && settingsManager.getOutputToCompanion() ? "true" : "false"
         );
 
         sendJson(json);
@@ -2059,6 +2575,25 @@ void WebPortal::handleApiSettings() noexcept
         String deviceName = doc["device_name"] | "";
         if (!deviceName.isEmpty()) {
             Logger::info("WebPortal", "Device name updated: %s", deviceName.c_str());
+        }
+
+        // Output routing toggles (OLED / Speaker / Companion)
+        bool settingsChanged = false;
+        if (doc["output_oled"].is<bool>()) {
+            settingsManager.setOutputToOled(doc["output_oled"].as<bool>());
+            settingsChanged = true;
+        }
+        if (doc["output_speaker"].is<bool>()) {
+            settingsManager.setOutputToSpeaker(doc["output_speaker"].as<bool>());
+            settingsChanged = true;
+        }
+        if (doc["output_companion"].is<bool>()) {
+            settingsManager.setOutputToCompanion(doc["output_companion"].as<bool>());
+            settingsChanged = true;
+        }
+        if (settingsChanged) {
+            settingsManager.save();
+            Logger::info("WebPortal", "Output routing settings updated");
         }
 
         Logger::info("WebPortal", "Settings API update request received");
@@ -2099,6 +2634,10 @@ bool WebPortal::isAuthenticatedOrReject() noexcept {
     if (isAuthenticated()) {
         return true;
     }
+    Logger::warning("WebPortal", "Auth rejected: hasHeader=%d hasSession=%d uri=%s",
+        m_server.hasHeader("X-Auth-Token") ? 1 : 0,
+        !m_sessionToken.isEmpty() ? 1 : 0,
+        m_server.uri().c_str());
     sendError("Unauthorized", 401);
     return false;
 }

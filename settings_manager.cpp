@@ -26,6 +26,7 @@ namespace {
   // LED settings keys
   constexpr const char* LED_BRIGHTNESS_KEY = "led_bright";
   constexpr const char* LED_ENABLED_KEY = "led_enabled";
+  constexpr const char* DISCO_BRIGHTNESS_KEY = "disco_bright";
   
   // Audio settings keys
   constexpr const char* VOLUME_KEY = "volume";
@@ -54,6 +55,11 @@ namespace {
   // Interaction refinement keys
   constexpr const char* SILENT_MODE_KEY = "silent";
   constexpr const char* PRIVACY_MODE_KEY = "privacy";
+
+  // Output routing keys
+  constexpr const char* OUTPUT_OLED_KEY = "out_oled";
+  constexpr const char* OUTPUT_SPEAKER_KEY = "out_spk";
+  constexpr const char* OUTPUT_COMPANION_KEY = "out_comp";
   constexpr const char* NIGHT_MODE_ENABLED_KEY = "night_en";
   constexpr const char* NIGHT_START_HOUR_KEY = "night_sh";
   constexpr const char* NIGHT_START_MIN_KEY = "night_sm";
@@ -72,6 +78,7 @@ namespace {
   constexpr uint16_t DEFAULT_SCREEN_TIMEOUT = 60;
   constexpr uint8_t DEFAULT_LED_BRIGHTNESS = 120;
   constexpr bool DEFAULT_LED_ENABLED = true;
+  constexpr uint8_t DEFAULT_DISCO_BRIGHTNESS = 100;
   constexpr uint8_t DEFAULT_VOLUME = 70;
   constexpr uint8_t DEFAULT_MIC_GAIN = 60;
   constexpr bool DEFAULT_WAKE_WORD_ENABLED = true;
@@ -79,6 +86,9 @@ namespace {
   constexpr bool DEFAULT_CONTINUOUS_LISTENING = false;
   constexpr bool DEFAULT_SILENT_MODE = false;
   constexpr bool DEFAULT_PRIVACY_MODE = false;
+  constexpr bool DEFAULT_OUTPUT_OLED = true;
+  constexpr bool DEFAULT_OUTPUT_SPEAKER = true;
+  constexpr bool DEFAULT_OUTPUT_COMPANION = true;
   constexpr bool DEFAULT_NIGHT_MODE = false;
   constexpr uint8_t DEFAULT_NIGHT_START_HOUR = 21;
   constexpr uint8_t DEFAULT_NIGHT_START_MIN = 0;
@@ -198,6 +208,7 @@ bool SettingsManager::load() noexcept {
   // Load LED settings
   m_settings.ledBrightness = m_preferences.getUChar(LED_BRIGHTNESS_KEY, DEFAULT_LED_BRIGHTNESS);
   m_settings.ledEnabled = m_preferences.getBool(LED_ENABLED_KEY, DEFAULT_LED_ENABLED);
+  m_settings.discoBrightness = m_preferences.getUChar(DISCO_BRIGHTNESS_KEY, DEFAULT_DISCO_BRIGHTNESS);
   
   // Load audio settings
   m_settings.volume = m_preferences.getUChar(VOLUME_KEY, DEFAULT_VOLUME);
@@ -213,6 +224,11 @@ bool SettingsManager::load() noexcept {
   // Load interaction refinement settings
   m_settings.silentMode = m_preferences.getBool(SILENT_MODE_KEY, DEFAULT_SILENT_MODE);
   m_settings.privacyMode = m_preferences.getBool(PRIVACY_MODE_KEY, DEFAULT_PRIVACY_MODE);
+
+  // Load output routing settings
+  m_settings.outputToOled = m_preferences.getBool(OUTPUT_OLED_KEY, DEFAULT_OUTPUT_OLED);
+  m_settings.outputToSpeaker = m_preferences.getBool(OUTPUT_SPEAKER_KEY, DEFAULT_OUTPUT_SPEAKER);
+  m_settings.outputToCompanion = m_preferences.getBool(OUTPUT_COMPANION_KEY, DEFAULT_OUTPUT_COMPANION);
   m_settings.nightModeEnabled = m_preferences.getBool(NIGHT_MODE_ENABLED_KEY, DEFAULT_NIGHT_MODE);
   m_settings.nightModeStartHour = m_preferences.getUChar(NIGHT_START_HOUR_KEY, DEFAULT_NIGHT_START_HOUR);
   m_settings.nightModeStartMinute = m_preferences.getUChar(NIGHT_START_MIN_KEY, DEFAULT_NIGHT_START_MIN);
@@ -281,6 +297,7 @@ bool SettingsManager::saveAll() noexcept {
   // Save LED settings
   m_preferences.putUChar(LED_BRIGHTNESS_KEY, m_settings.ledBrightness);
   m_preferences.putBool(LED_ENABLED_KEY, m_settings.ledEnabled);
+  m_preferences.putUChar(DISCO_BRIGHTNESS_KEY, m_settings.discoBrightness);
   
   // Save audio settings
   m_preferences.putUChar(VOLUME_KEY, m_settings.volume);
@@ -296,6 +313,11 @@ bool SettingsManager::saveAll() noexcept {
   // Save interaction refinement settings
   m_preferences.putBool(SILENT_MODE_KEY, m_settings.silentMode);
   m_preferences.putBool(PRIVACY_MODE_KEY, m_settings.privacyMode);
+
+  // Save output routing settings
+  m_preferences.putBool(OUTPUT_OLED_KEY, m_settings.outputToOled);
+  m_preferences.putBool(OUTPUT_SPEAKER_KEY, m_settings.outputToSpeaker);
+  m_preferences.putBool(OUTPUT_COMPANION_KEY, m_settings.outputToCompanion);
   m_preferences.putBool(NIGHT_MODE_ENABLED_KEY, m_settings.nightModeEnabled);
   m_preferences.putUChar(NIGHT_START_HOUR_KEY, m_settings.nightModeStartHour);
   m_preferences.putUChar(NIGHT_START_MIN_KEY, m_settings.nightModeStartMinute);
@@ -484,6 +506,19 @@ bool SettingsManager::setLedEnabled(bool enabled) noexcept {
   return true;
 }
 
+uint8_t SettingsManager::getDiscoBrightness() const noexcept {
+  return m_settings.discoBrightness;
+}
+
+bool SettingsManager::setDiscoBrightness(uint8_t brightness) noexcept {
+  const uint8_t clamped = (brightness < 10U) ? 10U : (brightness > 100U) ? 100U : brightness;
+  if (m_settings.discoBrightness != clamped) {
+    m_settings.discoBrightness = clamped;
+    m_dirty = true;
+  }
+  return true;
+}
+
 // ============================================================================
 // AUDIO SETTINGS GETTERS/SETTERS
 // ============================================================================
@@ -557,6 +592,46 @@ bool SettingsManager::getSilentMode() const noexcept {
 bool SettingsManager::setSilentMode(bool enabled) noexcept {
   if (m_settings.silentMode != enabled) {
     m_settings.silentMode = enabled;
+    m_dirty = true;
+  }
+  return true;
+}
+
+// ========================================================================
+// Output routing getters/setters
+// ========================================================================
+
+bool SettingsManager::getOutputToOled() const noexcept {
+  return m_settings.outputToOled;
+}
+
+bool SettingsManager::setOutputToOled(bool enabled) noexcept {
+  if (m_settings.outputToOled != enabled) {
+    m_settings.outputToOled = enabled;
+    m_dirty = true;
+  }
+  return true;
+}
+
+bool SettingsManager::getOutputToSpeaker() const noexcept {
+  return m_settings.outputToSpeaker;
+}
+
+bool SettingsManager::setOutputToSpeaker(bool enabled) noexcept {
+  if (m_settings.outputToSpeaker != enabled) {
+    m_settings.outputToSpeaker = enabled;
+    m_dirty = true;
+  }
+  return true;
+}
+
+bool SettingsManager::getOutputToCompanion() const noexcept {
+  return m_settings.outputToCompanion;
+}
+
+bool SettingsManager::setOutputToCompanion(bool enabled) noexcept {
+  if (m_settings.outputToCompanion != enabled) {
+    m_settings.outputToCompanion = enabled;
     m_dirty = true;
   }
   return true;
@@ -800,6 +875,7 @@ void SettingsManager::loadDefaults() noexcept {
   // LED settings
   m_settings.ledBrightness = DEFAULT_LED_BRIGHTNESS;
   m_settings.ledEnabled = DEFAULT_LED_ENABLED;
+  m_settings.discoBrightness = DEFAULT_DISCO_BRIGHTNESS;
   
   // Audio settings
   m_settings.volume = DEFAULT_VOLUME;
@@ -816,6 +892,11 @@ void SettingsManager::loadDefaults() noexcept {
   // Interaction refinement settings
   m_settings.silentMode = DEFAULT_SILENT_MODE;
   m_settings.privacyMode = DEFAULT_PRIVACY_MODE;
+
+  // Output routing settings
+  m_settings.outputToOled = DEFAULT_OUTPUT_OLED;
+  m_settings.outputToSpeaker = DEFAULT_OUTPUT_SPEAKER;
+  m_settings.outputToCompanion = DEFAULT_OUTPUT_COMPANION;
   m_settings.nightModeEnabled = DEFAULT_NIGHT_MODE;
   m_settings.nightModeStartHour = DEFAULT_NIGHT_START_HOUR;
   m_settings.nightModeStartMinute = DEFAULT_NIGHT_START_MIN;
@@ -852,6 +933,14 @@ bool SettingsManager::validate() noexcept {
   
   if (m_settings.ledBrightness > 255) {
     m_settings.ledBrightness = 255;
+  }
+
+  // Validate disco brightness (10-100 percent)
+  if (m_settings.discoBrightness > 100) {
+    m_settings.discoBrightness = 100;
+  }
+  if (m_settings.discoBrightness < 10) {
+    m_settings.discoBrightness = 10;
   }
   
   // Validate volume (0-100)

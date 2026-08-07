@@ -5,6 +5,7 @@
 #include "context_manager.h"
 #include "storage_manager.h"
 #include "performance_manager.h"
+#include "aura_system.h"
 
 OledRenderer oledRenderer;
 
@@ -125,6 +126,7 @@ void OledRenderer::dismissOverlay() noexcept {
     m_overlayActive = false;
     m_overlayText = "";
     displayManager.showHome();
+    auraSystem.enterIdle();
 }
 
 void OledRenderer::update() noexcept {
@@ -165,17 +167,18 @@ const char* OledRenderer::getName() const noexcept {
 
 void OledRenderer::renderDashboardScreen(const UIScreen& screen) noexcept {
     displayManager.showHome();
+    auraSystem.enterIdle();
 }
 
 void OledRenderer::renderAssistantScreen(const UIScreen& screen) noexcept {
     if (screen.data.indexOf("listening") >= 0) {
-        displayManager.showListening();
+        auraSystem.listen();
     } else if (screen.data.indexOf("thinking") >= 0) {
-        displayManager.showThinking();
+        auraSystem.think();
     } else if (screen.data.indexOf("speaking") >= 0) {
-        displayManager.showSpeaking();
+        auraSystem.speak();
     } else {
-        displayManager.showHome();
+        auraSystem.enterIdle();
     }
 }
 
@@ -190,6 +193,7 @@ void OledRenderer::renderHealthScreen(const UIScreen& screen) noexcept {
         totalMB = total / (1024 * 1024);
     }
     displayManager.showStorageStatus("SD", usedMB, totalMB);
+    auraSystem.enterIdle();
 }
 
 void OledRenderer::renderMessageScreen(const UIScreen& screen) noexcept {

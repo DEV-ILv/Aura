@@ -5,6 +5,7 @@
 #include "display_manager.h"
 #include "memory_manager.h"
 #include "ai_pipeline.h"
+#include "aura_system.h"
 
 ResilienceManager resilienceManager;
 
@@ -183,6 +184,7 @@ bool ResilienceManager::RecoverRenderer() noexcept {
     if (displayManager.isInitialized()) {
         displayManager.clear();
         displayManager.showHome();
+        auraSystem.enterIdle();
         return true;
     }
     return false;

@@ -3,10 +3,11 @@
 
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_SH110X.h>
 #include <cstdint>
 #include "config.h"
 #include "logger.h"
+#include "aura_face.h"
 
 /**
  * @enum DisplayState
@@ -23,7 +24,27 @@ enum class DisplayState : uint8_t {
     ERROR,         ///< Error display
     OTA,           ///< Over-the-air update progress
     SLEEP,         ///< Sleep/low-power state
-    STARTUP_GREETING  ///< Startup greeting display
+    STARTUP_GREETING,  ///< Startup greeting display
+    FACE           ///< JARVIS-style animated presence (idle / active expressions)
+};
+
+/**
+ * @enum MicStatus
+ * @brief Live microphone/voice state shown by the top-right status icon.
+ *
+ * The OLED is 1-bit monochrome, so a "colour" cannot be rendered literally.
+ * Each state therefore maps to a distinct, crisp glyph (dash/slash, solid,
+ * animated pulse, orbiting dot, sound waves, X) that reads independently as
+ * the voice pipeline advances.
+ */
+enum class MicStatus : uint8_t {
+    MUTED,       ///< Mic muted / privacy (grey mic + slash)
+    IDLE,        ///< Ready, listening for input (solid mic)
+    LISTENING,   ///< Voice detected / capturing intent (solid + in-arrow)
+    RECORDING,   ///< Recording capture (breathing pulse, ~200ms)
+    PROCESSING,  ///< AI/STT processing (orbiting dot)
+    SPEAKING,    ///< Speaking (spinning sound waves)
+    ERROR        ///< Mic/voice error (X)
 };
 
 /**
@@ -145,6 +166,33 @@ void reset() noexcept;
     void showHome() noexcept;
 
     /**
+     * @brief Show the animated AURA presence face (default idle).
+     */
+    void showFace() noexcept;
+
+    /**
+     * @brief Show the AURA presence face with an explicit expression.
+     * @note Used by AuraSystem so the OLED face and RGB aura always stay in sync.
+     */
+    void showFaceExpression(FaceExpression expr) noexcept;
+
+    /**
+     * @brief Show the smart dashboard on demand.
+     * @note Returns to the face automatically after kDashboardReturnMs.
+     */
+    void showDashboard() noexcept;
+
+    /**
+     * @brief True while the on-demand dashboard is being shown.
+     */
+    [[nodiscard]] bool isDashboardActive() const noexcept;
+
+    /**
+     * @brief Trigger a face micro-animation from a system event.
+     */
+    void faceNotify(FaceEvent event) noexcept;
+
+    /**
      * @brief Update home screen dynamic data for ambient intelligence
      * @param personalityName Active personality display name
      * @param lastActivity Current activity description
@@ -160,6 +208,17 @@ void reset() noexcept;
      * @param muted true if mic is muted (push-to-talk idle), false if active (continuous listening)
      */
     void setMicMuted(bool muted) noexcept;
+
+    /**
+     * @brief Set the live vocie state shown by the top-right mic icon.
+     * @note Updates the icon region immediately (no full-screen redraw).
+     */
+    void setMicStatus(MicStatus status) noexcept;
+
+    /**
+     * @brief Get the mic/voice state currently shown by the top-right icon.
+     */
+    [[nodiscard]] MicStatus getMicStatus() const noexcept;
 
     /**
      * @brief Show microphone listening state
@@ -234,6 +293,17 @@ void reset() noexcept;
      * @param footer Optional footer text
      */
     void showMessage(const String& title, const String& body, const String& footer = "") noexcept;
+
+    /**
+     * @brief Pin the current status screen so the idle auto-return cannot
+     *        overwrite it until unpinned (e.g. "Microphone Muted", "Setup Mode").
+     */
+    void pinStatus() noexcept;
+
+    /**
+     * @brief Allow the idle auto-return again (call when the pinned status ends).
+     */
+    void unpinStatus() noexcept;
 
     /**
      * @brief Show startup greeting with custom lines
@@ -358,6 +428,7 @@ private:
     void renderMessage() noexcept;
     void renderSleep() noexcept;
     void renderStartupGreeting() noexcept;
+    void renderFace() noexcept;
 
     // Private helper methods
     void drawCenteredText(const String& text, uint8_t y, uint8_t textSize = 1) noexcept;
@@ -365,6 +436,9 @@ private:
     void drawWifiIcon(uint8_t x, uint8_t y, int32_t signal) noexcept;
     void drawStorageIcon(uint8_t x, uint8_t y) noexcept;
     void drawMicStatus(uint8_t x, uint8_t y) noexcept;
+    void renderMicIcon() noexcept;
+    void drawMicGlyph(uint8_t x0, uint8_t y0) noexcept;
+    [[nodiscard]] bool isMicIconAnimated() const noexcept;
     void drawStatusBar() noexcept;
     void updateAnimation() noexcept;
     void updateScreenTimeout() noexcept;
@@ -382,7 +456,7 @@ private:
     void drawThinkingCore(uint8_t cx, uint8_t cy, uint8_t frame) noexcept;
 
     // Private member variables
-    Adafruit_SSD1306 m_display;              ///< OLED display object
+    Adafruit_SH1106G m_display{OLED_WIDTH, OLED_HEIGHT};   ///< SH1106 OLED display object
     DisplayState m_currentState;             ///< Current display state
     DisplayState m_previousState;            ///< Previous display state
     DisplayState m_lastRenderedState;
@@ -417,6 +491,12 @@ private:
 
     // Mic state for status bar
     bool m_micMuted;
+
+    // Top-right microphone status icon
+    MicStatus m_micStatus;          ///< Current mic/voice state
+    MicStatus m_lastMicStatus;      ///< Last rendered state (region-only redraws)
+    unsigned long m_lastMicIconTime; ///< Last animated icon tick
+    uint8_t m_micIconPhase;         ///< Icon animation phase
 
     // ========================================================================
     // Smart Dashboard Widget System
@@ -531,14 +611,28 @@ private:
     uint8_t m_cachedOTAProgress;             ///< Cached OTA progress percentage
     uint8_t m_cachedBootProgress;            ///< Cached boot progress percentage
 
+    // AURA presence face + on-demand dashboard timer
+    AuraFace m_face;                         ///< JARVIS-style face renderer
+    unsigned long m_dashboardUntil;        ///< Timestamp when dashboard returns to face
+    bool m_statusPinned = false;         ///< Hold status screen against auto-return
+
     // Display configuration constants
     static constexpr uint16_t m_displayWidth{OLED_WIDTH};           ///< Display width in pixels
     static constexpr uint16_t m_displayHeight{OLED_HEIGHT};         ///< Display height in pixels
     static constexpr unsigned long m_screenTimeoutMs{30000UL};      ///< Screen sleep timeout (30 seconds)
     static constexpr unsigned long m_refreshIntervalMs{33UL};       ///< Refresh interval (≈30 FPS)
     static constexpr unsigned long m_animationIntervalMs{100UL};
+    static constexpr unsigned long m_dashboardReturnMs{8000UL};     ///< Dashboard auto-return to face
+    static constexpr unsigned long m_infoReturnMs{6000UL};          ///< Notification/reminder auto-return
     static constexpr uint8_t m_defaultBrightness{200};              ///< Default brightness level
     static constexpr uint8_t m_defaultContrast{255};
+
+    // Top-right microphone icon geometry
+    static constexpr uint8_t mMicIconX{116};   ///< Left edge of the icon region
+    static constexpr uint8_t mMicIconY{0};     ///< Top edge of the icon region
+    static constexpr uint8_t mMicIconW{12};    ///< Icon region width
+    static constexpr uint8_t mMicIconH{12};    ///< Icon region height
+    static constexpr unsigned long mMicIconIntervalMs{100UL}; ///< Animation cadence (~200ms pulse)
 };
 
 /**

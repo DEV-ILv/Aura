@@ -167,6 +167,45 @@ public:
     [[nodiscard]] StorageStatus getLastStatus() const noexcept;
 
     // ========================================================================
+    // SD Card Diagnostics (read-only helpers for /api/sd/diagnostics)
+    // ========================================================================
+
+    /**
+     * @brief Raw SD card type (0=NONE,1=MMC,2=SD,3=SDHC,4=UNKNOWN).
+     */
+    [[nodiscard]] std::uint8_t getSDCardType() const noexcept;
+
+    /**
+     * @brief Raw SD card capacity in bytes (0 if not mounted).
+     */
+    [[nodiscard]] std::uint64_t getSDCardSize() const noexcept;
+
+    /**
+     * @brief Human-readable current card type name ("NONE","MMC","SD","SDHC").
+     */
+    [[nodiscard]] const char* getSDCardTypeName() const noexcept;
+
+    /**
+     * @brief Human-readable description of the last SD mount outcome.
+     */
+    [[nodiscard]] const char* getSDLastError() const noexcept;
+
+    /**
+     * @brief Configured SD SPI clock in Hz.
+     */
+    [[nodiscard]] std::uint32_t getSDSpiFrequencyHz() const noexcept;
+
+    /**
+     * @brief One-shot read/write throughput test in bytes/sec.
+     *
+     * Writes then reads a temporary file, times each pass, then removes it.
+     * Only meaningful when the SD card is mounted.
+     */
+    [[nodiscard]] StorageStatus runSDSpeedTest(
+        float& readBytesPerSec,
+        float& writeBytesPerSec) noexcept;
+
+    // ========================================================================
     // Directory Operations
     // ========================================================================
 
@@ -565,6 +604,7 @@ static constexpr const char* LOG_DIR          = "/logs";
     bool m_initialized;                ///< Initialization state
     StorageStatus m_lastStatus;
     bool m_storageHealthy;
+    String m_sdLastError;              ///< Last SD mount/diagnostic outcome
     unsigned long m_lastCleanup;       ///< Timestamp of last cleanup operation
     static constexpr unsigned long m_cleanupIntervalMs{3600000}; ///< 1 hour between cleanups
 };

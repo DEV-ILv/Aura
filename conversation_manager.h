@@ -3,9 +3,9 @@
 
 #include <Arduino.h>
 #include <vector>
-#include "speech_to_text.h"
+#include "sarvam_stt.h"
 #include "gemini_client.h"
-#include "text_to_speech.h"
+#include "sarvam_tts.h"
 #include "display_manager.h"
 #include "logger.h"
 #include "config.h"
@@ -343,6 +343,23 @@ public:
     void togglePrivacyMode() noexcept;
     /**@}*/
 
+    /** @name Setup Mode */
+    /**@{*/
+    [[nodiscard]] bool isSetupMode() const noexcept;
+    void enterSetupMode() noexcept;
+    void exitSetupMode() noexcept;
+    /**@}*/
+
+    /** @name Interaction telemetry (companion app) */
+    /**@{*/
+    [[nodiscard]] const String& getLastWakeSource() const noexcept;
+    [[nodiscard]] const String& getLastTouchEvent() const noexcept;
+    [[nodiscard]] unsigned long getLastVoiceTimestampMs() const noexcept;
+    /**@}*/
+
+    /** @brief Hands-free wake handler, invoked from the VOICE_DETECTED event. */
+    void onVoiceDetected() noexcept;
+
     /** @name Quick Command */
     /**@{*/
     [[nodiscard]] bool isQuickCommandMode() const noexcept;
@@ -448,13 +465,16 @@ private:
     void endFollowUp() noexcept;
 
     // Interaction refinement helpers
-    void handleTap() noexcept;
-    void handleDoubleTap() noexcept;
-    void handleLongPress() noexcept;
-    void handleVeryLongPress() noexcept;
+void handleTap() noexcept;
+void handleDoubleTap() noexcept;
+void handleLongPress() noexcept;
+void handleVeryLongPress() noexcept;
+void handleMediumHold() noexcept;
     void handleQuickCommand(const String& transcript) noexcept;
     void checkAutoSleep() noexcept;
     void checkContextReminder() noexcept;
+    void cancelActiveResponse() noexcept;
+    void ensureEventSubscriptions() noexcept;
 
     // Helpers
     void updateDisplay() noexcept;
@@ -496,6 +516,13 @@ private:
     bool m_silentMode;
     bool m_privacyMode;
     bool m_quickCommandMode;
+    bool m_setupMode;
+
+    // Voice-triggered wake / telemetry
+    bool m_eventSubscribed;
+    unsigned long m_lastVoiceStartTime;
+    String m_lastWakeSource;
+    String m_lastTouchEvent;
 
     // Touch gesture handling (tap, double-tap, long-press, very-long-press)
     bool m_touchActive;
@@ -544,10 +571,12 @@ private:
     static constexpr unsigned long kStateTimeoutMs = 30000UL;
     static constexpr unsigned long kFollowUpDurationMs = 10000UL;
     static constexpr unsigned long kTouchPollIntervalMs = 20UL;
+    static constexpr unsigned long kMinTapMs = 50UL;         // ignore accidental taps < 50ms
     static constexpr unsigned long kTapMaxMs = 400UL;
     static constexpr unsigned long kDoubleTapWindowMs = 500UL;
-    static constexpr unsigned long kLongPressMs = 2500UL;
-    static constexpr unsigned long kVeryLongPressMs = 6000UL;
+    static constexpr unsigned long kLongPressMs = 2000UL;    // 2-3s: mute toggle
+    static constexpr unsigned long kVeryLongPressMs = 5000UL; // 5+s: setup/provisioning
+    static constexpr unsigned long kVoiceReTriggerDebounceMs = 800UL;
     static constexpr unsigned long kAutoSleepCheckIntervalMs = 10000UL;
     static constexpr unsigned long kContextReminderIdleMs = 600000UL; // 10 min
 };

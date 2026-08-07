@@ -114,7 +114,7 @@ void RendererManager::setRenderer(RendererType type) noexcept {
 }
 
 RendererType RendererManager::detectDisplay() noexcept {
-    // Try I2C OLED scan (SSD1306 default address 0x3C)
+    // Try I2C OLED scan (SH1106 default address 0x3C)
     Wire.beginTransmission(OLED_ADDRESS);
     if (Wire.endTransmission() == 0) {
         LOG_INFO(kLogCategory, "OLED display detected at 0x%02X", OLED_ADDRESS);

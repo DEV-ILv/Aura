@@ -1,6 +1,7 @@
 #include "reminder_manager.h"
 #include <ArduinoJson.h>
 #include <ctime>
+#include "aura_system.h"
 
 /// Global ReminderManager instance
 ReminderManager reminderManager;
@@ -759,6 +760,7 @@ void ReminderManager::checkReminders() noexcept {
 void ReminderManager::triggerReminder(const Reminder& reminder) noexcept {
     // Update display
     displayManager.showReminder(reminder.title, reminder.message);
+    auraSystem.reminder();
 
     // Speak reminder
     String speechText = "Reminder: " + reminder.title + ". " + reminder.message;

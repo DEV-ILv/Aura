@@ -138,10 +138,13 @@ void initializeWatchdog() {
     };
     esp_err_t err = esp_task_wdt_init(&wdt_config);
     if (err == ESP_ERR_INVALID_STATE) {
-        // TWDT is already initialized (e.g. by the Arduino core / WiFi stack).
-        // Adopt the existing watchdog instead of treating this as a failure.
-        Logger::info("SYSTEM", "Watchdog already initialized, adopting");
-        err = ESP_OK;
+        // TWDT is already initialized (e.g. by the Arduino core / WiFi stack)
+        // with a tighter timeout (typically 5-15s). Boot takes ~16s, so that
+        // shorter backstop aborts even when nothing is actually hung. Tear
+        // it down and re-create it with our intended 30s timeout.
+        Logger::warning("SYSTEM", "Watchdog pre-initialized with tighter timeout; recreating at %lu ms", kWatchdogTimeoutMs);
+        esp_task_wdt_deinit();
+        err = esp_task_wdt_init(&wdt_config);
     }
     if (err == ESP_OK) {
         // Register the current (loop) task with the task WDT. Ignore the

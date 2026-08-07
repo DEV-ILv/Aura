@@ -1,8 +1,11 @@
 #include "storage_manager.h"
 #include <SPIFFS.h>
 #include <SD.h>
+#include <SPI.h>
 #include <FS.h>
 #include <ctime>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 /// Global StorageManager instance
 StorageManager storageManager;
@@ -20,6 +23,17 @@ fs::FS& getFileSystem(StorageType type) noexcept {
         return SPIFFS;
     }
     return SD;
+}
+
+const char* sdCardTypeName(const uint8_t type) noexcept {
+    switch (type) {
+        case 0U: return "NONE";
+        case 1U: return "MMC";
+        case 2U: return "SD";
+        case 3U: return "SDHC";
+        case 4U: return "UNKNOWN";
+        default: return "INVALID";
+    }
 }
 
 
@@ -85,6 +99,24 @@ bool StorageManager::initialize() noexcept
 
     // Recover any orphaned .tmp files from interrupted atomic writes
     recoverOrphanedTmps();
+
+    // Mount the optional MicroSD card asynchronously on a background task so
+    // a slow/detecting card can never stall the WDT-registered loop task during
+    // boot. Absent cards fail gracefully and keep SPIFFS as the active store.
+    static bool sdMountArmed = false;
+    if (!sdMountArmed) {
+        sdMountArmed = true;
+        StorageManager* self = this;
+        xTaskCreatePinnedToCore(
+            [](void* param) {
+                auto* sm = static_cast<StorageManager*>(param);
+                if (sm->mountSD() != StorageStatus::SUCCESS) {
+                    Logger::warning("StorageManager", "SD card unavailable (optional)");
+                }
+                vTaskDelete(nullptr);
+            },
+            "aura_sd", 4096, self, 1, nullptr, tskNO_AFFINITY);
+    }
 
     m_initialized = true;
     m_storageHealthy = true;
@@ -162,14 +194,70 @@ StorageStatus StorageManager::mountSD() noexcept
         return StorageStatus::SUCCESS;
     }
 
-    if (!SD.begin(SD_CS_PIN))
+    // Explicitly bind the SPI bus to the configured SD pins before mounting;
+    // ensures the card is probed on the correct bus rather than relying on the
+    // default VSPI mapping at the call site.
+    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    Logger::info(kLogCategory,
+        "[SD] SPI initialized (SCK=GPIO%d MISO=GPIO%d MOSI=GPIO%d)",
+        (int)SD_SCK_PIN, (int)SD_MISO_PIN, (int)SD_MOSI_PIN);
+    Logger::info(kLogCategory, "[SD] CS pin = GPIO%d", (int)SD_CS_PIN);
+
+    // Passive presence hint: with the module's CS held low (module pull-down),
+    // the line reads LOW; a floating/no-connection reads HIGH via the internal
+    // pull-up. Informational only - SD.begin() below is the authoritative test.
+    pinMode(SD_CS_PIN, INPUT_PULLUP);
+    const int csIdle = digitalRead(SD_CS_PIN);
+    pinMode(SD_CS_PIN, OUTPUT);
+    digitalWrite(SD_CS_PIN, HIGH);
+    Logger::info(kLogCategory, "[SD] CS line = %s",
+        (csIdle == LOW) ? "LOW (module pull present)" :
+        (csIdle == HIGH) ? "HIGH (floating/no module)" : "UNKNOWN");
+
+    // Bounded, non-blocking-for-boot retry loop (runs on the background task).
+    // A present card sometimes needs a short warm-up; a missing card fails
+    // fast on every attempt. The main boot path is never blocked.
+    bool ok = false;
+    uint8_t attempts = 0;
+    constexpr uint8_t kMaxAttempts = 3;
+    for (; attempts < kMaxAttempts; ++attempts) {
+        const uint32_t sdT0 = millis();
+        ok = SD.begin(SD_CS_PIN, SPI, SD_SPI_FREQUENCY_HZ);
+        Logger::info(kLogCategory,
+            "[SD] begin() attempt %u: %s in %u ms",
+            (unsigned)(attempts + 1), ok ? "OK" : "fail",
+            (unsigned)(millis() - sdT0));
+        if (ok) break;
+        if (attempts + 1 < kMaxAttempts) vTaskDelay(120 / portTICK_PERIOD_MS);
+    }
+
+    if (!ok)
     {
-        Logger::warning(kLogCategory, "SD card mount failed");
+        const uint8_t type = SD.cardType();
+        if (type == 0U) {
+            m_sdLastError = "Card not detected on SPI bus (CS=GPIO" +
+                String(SD_CS_PIN) + ", check wiring/power)";
+        } else {
+            m_sdLastError = "SD.begin() failed after " + String(attempts) +
+                " attempts (cardType=" + String(type) + ")";
+        }
+        Logger::warning(kLogCategory, "[SD] ERROR: %s", m_sdLastError.c_str());
         m_lastStatus = StorageStatus::ERROR_IO;
         return StorageStatus::ERROR_IO;
     }
 
+    const uint8_t type = SD.cardType();
+    const uint64_t capacity = SD.cardSize();
+    Logger::info(kLogCategory, "[SD] Card detected");
+    Logger::info(kLogCategory, "[SD] Card type = %s",
+        sdCardTypeName(type));
+    Logger::info(kLogCategory, "[SD] Capacity = %llu MB",
+        (unsigned long long)(capacity / (1024ULL * 1024ULL)));
+    Logger::info(kLogCategory, "[SD] FAT32 mounted");
+    Logger::info(kLogCategory, "[SD] Filesystem OK");
+
     m_sdMounted = true;
+    m_sdLastError = "OK";
     m_lastStatus = StorageStatus::SUCCESS;
     Logger::info(kLogCategory, "SD card mounted");
     return StorageStatus::SUCCESS;
@@ -1176,6 +1264,102 @@ StorageStatus StorageManager::getStatistics(
         return StorageStatus::ERROR_NOT_MOUNTED;
     }
 
+    m_lastStatus = StorageStatus::SUCCESS;
+    return StorageStatus::SUCCESS;
+}
+
+// ============================================================================
+// SD Card Diagnostics
+// ============================================================================
+
+std::uint8_t StorageManager::getSDCardType() const noexcept
+{
+    if (!m_sdMounted) return 0U;
+    return static_cast<std::uint8_t>(SD.cardType());
+}
+
+std::uint64_t StorageManager::getSDCardSize() const noexcept
+{
+    if (!m_sdMounted) return 0U;
+    return static_cast<std::uint64_t>(SD.cardSize());
+}
+
+const char* StorageManager::getSDCardTypeName() const noexcept
+{
+    return sdCardTypeName(getSDCardType());
+}
+
+const char* StorageManager::getSDLastError() const noexcept
+{
+    return m_sdLastError.c_str();
+}
+
+std::uint32_t StorageManager::getSDSpiFrequencyHz() const noexcept
+{
+    return static_cast<std::uint32_t>(SD_SPI_FREQUENCY_HZ);
+}
+
+StorageStatus StorageManager::runSDSpeedTest(
+    float& readBytesPerSec,
+    float& writeBytesPerSec) noexcept
+{
+    readBytesPerSec = 0.0f;
+    writeBytesPerSec = 0.0f;
+
+    if (!m_sdMounted)
+    {
+        m_lastStatus = StorageStatus::ERROR_NOT_MOUNTED;
+        return StorageStatus::ERROR_NOT_MOUNTED;
+    }
+
+    // Modest 64 KiB probe - enough to be meaningful, small enough to keep the
+    // request snappy and the card's flash wear negligible.
+    constexpr size_t kProbeBytes = 64U * 1024U;
+    constexpr const char* kProbePath = "/.sd_diag_probe.bin";
+    std::vector<uint8_t> pattern(kProbeBytes, 0xA5);
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        pattern[i] = static_cast<uint8_t>(i * 7U + 3U);
+    }
+
+    // --- write pass ---
+    const uint32_t w0 = millis();
+    StorageStatus st = writeFile(kProbePath, pattern.data(), pattern.size(),
+        StorageType::SD_CARD);
+    const uint32_t wElapsed = millis() - w0;
+    if (st != StorageStatus::SUCCESS)
+    {
+        m_sdLastError = "Speed test write failed";
+        m_lastStatus = st;
+        return st;
+    }
+    if (wElapsed > 0U)
+    {
+        writeBytesPerSec = static_cast<float>(kProbeBytes) *
+            (1000.0f / static_cast<float>(wElapsed));
+    }
+
+    // --- read pass ---
+    std::vector<uint8_t> readback(kProbeBytes);
+    size_t bytesRead = 0;
+    const uint32_t r0 = millis();
+    st = readFile(kProbePath, readback.data(), readback.size(), bytesRead,
+        StorageType::SD_CARD);
+    const uint32_t rElapsed = millis() - r0;
+    deleteFile(kProbePath, StorageType::SD_CARD);
+
+    if (st != StorageStatus::SUCCESS || bytesRead != kProbeBytes)
+    {
+        m_sdLastError = "Speed test read failed";
+        m_lastStatus = StorageStatus::ERROR_IO;
+        return StorageStatus::ERROR_IO;
+    }
+    if (rElapsed > 0U)
+    {
+        readBytesPerSec = static_cast<float>(kProbeBytes) *
+            (1000.0f / static_cast<float>(rElapsed));
+    }
+
+    m_sdLastError = "OK";
     m_lastStatus = StorageStatus::SUCCESS;
     return StorageStatus::SUCCESS;
 }

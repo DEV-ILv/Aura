@@ -233,6 +233,14 @@ public:
   [[nodiscard]] float getAudioPeak() const noexcept;
 
   /**
+   * @brief Sample a short burst of live microphone audio (non-blocking)
+   * @param energyOut Receives RMS energy of the burst
+   * @param peakOut Receives peak amplitude of the burst
+   * @return true if at least one I2S frame was captured
+   */
+  [[nodiscard]] bool sampleMicLevel(float& energyOut, float& peakOut) noexcept;
+
+  /**
    * @brief Get current noise floor estimate
    * @return Noise floor RMS level
    */
@@ -263,6 +271,23 @@ public:
    * @return Current noise threshold
    */
   [[nodiscard]] uint16_t getNoiseThreshold() const noexcept;
+
+  /**
+   * @brief Whether voice activity is currently detected by the always-on VAD
+   * @return true when live mic energy exceeds the speech threshold
+   */
+  [[nodiscard]] bool isVoiceActive() const noexcept;
+
+  /**
+   * @brief Enable/disable the always-on voice-activity monitor.
+   * @param enabled false disables the passive mic VAD (e.g. privacy mode)
+   */
+  void setVoiceActivityMonitoring(bool enabled) noexcept;
+
+  /**
+   * @brief Whether the always-on voice-activity monitor is enabled.
+   */
+  [[nodiscard]] bool isVoiceActivityMonitoringEnabled() const noexcept;
 
   // ========================================================================
   // Audio Queue & Speech Cancellation
@@ -313,6 +338,7 @@ private:
   void resetState() noexcept;
   void updateGain() noexcept;
   void updateVolume() noexcept;
+  void runVoiceActivityDetection() noexcept;
 
   // Private member variables
   AudioState m_state;                   ///< Current audio manager state
@@ -337,6 +363,15 @@ private:
   float m_lastAudioPeak;                ///< Peak amplitude of last chunk
   uint16_t m_noiseFloor;                ///< Estimated noise floor (RMS)
   uint16_t m_noiseThreshold;            ///< Noise threshold for signal detection
+
+  // Voice activity detection (idle always-on monitoring)
+  bool m_voiceActive;                   ///< VAD currently latched on
+  bool m_vadMonitoring;                 ///< Always-on VAD monitor enabled
+  uint8_t m_voiceDebounce;              ///< Frames below threshold before release
+  unsigned long m_lastVadSampleTime;    ///< Timestamp of last VAD mic sample
+  static constexpr uint32_t kVadIdleIntervalMs = 90UL;
+  static constexpr uint32_t kVadActiveIntervalMs = 18UL;
+  static constexpr uint8_t kVadReleaseFrames = 2;
 
   // Audio queue
   std::vector<String> m_speechQueue;

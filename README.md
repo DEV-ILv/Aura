@@ -4,7 +4,7 @@
 **Platform:** ESP32-WROOM-32 (38-pin) · Arduino-ESP32 core 3.3.11
 **Firmware root:** `Aura_programs/`
 
-AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. It combines cloud AI (Gemini, Google Speech-to-Text, Google Text-to-Speech) with an offline fallback assistant, a full web configuration portal, and a suite of personal-productivity features — reminders, goals, habits, planning, study tools, daily briefings, reflections, a knowledge graph, documents, workspaces, and proactive recommendations — all driven from a small OLED display, an I2S microphone/speaker pair, an LED ring, a touch sensor, and SD-card storage.
+AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. It combines cloud AI (Gemini for reasoning, pluggable Speech-to-Text/Text-to-Speech — Sarvam AI as the active placeholder) with an offline fallback assistant, a full web configuration portal, and a suite of personal-productivity features — reminders, goals, habits, planning, study tools, daily briefings, reflections, a knowledge graph, documents, workspaces, and proactive recommendations — all driven from a small OLED display, an I2S microphone/speaker pair, an LED ring, a touch sensor, and SD-card storage.
 
 ## Documentation
 
@@ -14,6 +14,8 @@ AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. I
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, coding standards, and contribution workflow |
 | [CHANGELOG.md](CHANGELOG.md) | Release history and the Security Hardening V1 notes |
 | [docs/ota-signing.md](docs/ota-signing.md) | OTA key generation, signing, rotation, CI |
+| [docs/sarvam_ai.md](docs/sarvam_ai.md) | Sarvam AI STT/TTS integration architecture & readiness |
+| [docs/hardware-wiring.md](docs/hardware-wiring.md) | Verified hardware wiring & pinout (INMP441, MAX98357A, SD, OLED, LED, touch) |
 | [`aura_companion/.env.example`](../aura_companion/.env.example) | Companion cloud-credentials template (placeholders only) |
 
 ## Hardware
@@ -27,9 +29,23 @@ AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. I
 | Touch sensor | Capacitive touch | GPIO 13 |
 | SD card | SPI | CS 5 · MOSI 23 · MISO 19 · SCK 18 |
 
+### Microphone wiring (verified INMP441)
+
+| INMP441 pin | ESP32 GPIO | config.h symbol |
+| --- | --- | --- |
+| VDD | 3V3 | — |
+| GND | GND | — |
+| SCK (BCLK) | **GPIO26** | `MIC_BCLK_PIN` |
+| WS (LRCLK) | **GPIO25** | `MIC_WS_PIN` |
+| SD (DATA) | **GPIO34** | `MIC_DATA_PIN` |
+| **L/R** | **GND** (left channel, required) | — |
+
+Full verified wiring for all peripherals (speaker, SD, OLED, LED ring, touch):
+see [docs/hardware-wiring.md](docs/hardware-wiring.md).
+
 ## Features
 
-- **Voice assistant:** wake via touch, INMP441 capture → Google STT → Gemini → Google TTS → MAX98357 speaker.
+- **Voice assistant:** wake via touch, INMP441 capture → Cloud STT (Sarvam AI placeholder; see below) → Gemini → Cloud TTS (Sarvam AI placeholder) → MAX98357 speaker. STT/TTS providers are interchangeable via `SpeechToTextProvider` / `TextToSpeechProvider` (see [docs/sarvam_ai.md](docs/sarvam_ai.md)).
 - **Offline assistant (Local AI Engine V2):** `LocalAIEngine` composes context-aware, personality-styled replies across all 28 intents via a multi-engine pipeline (Conversation Context → Memory/Knowledge retrieval → Planner → Goals → Recommendation Engine → Personality → Sentence Generation), with time-of-day awareness, follow-up questions, a response cache, and guaranteed response variation. `OfflineResponseGenerator` delegates to it, preserving the Intent Classifier → Generator → managers architecture when the cloud is unreachable.
 - **Web portal:** dashboard + REST/HTML configuration and CRUD for nearly every feature (token-authenticated).
 - **Signed OTA updates:** ECDSA P-256 + streaming SHA-256 verification before install.
@@ -50,6 +66,25 @@ AURA OS is a standalone, voice-first desktop AI assistant built for the ESP32. I
   ```
 - `firmware_keys.h` — ECDSA P-256 public key for OTA verification.
 - Runtime settings via `SettingsManager`; Wi-Fi credentials in NVS (`aura_wifi`).
+
+### Setting your API keys
+
+After copying the template, open `secrets.h` and fill in at least:
+
+| Secret | Purpose |
+|---|---|
+| `GEMINI_API_KEY` | Gemini reasoning engine (the brain) |
+| `SARVAM_API_KEY` | Sarvam AI speech provider (STT/TTS, currently a placeholder) |
+| `AP_SSID` / `AP_PASSWORD` | Initial access-point (dev defaults are documented in the template) |
+| `WEB_USERNAME` / `WEB_PASSWORD` | Web-portal admin login (production generates its own first-boot password) |
+
+> **Never commit `secrets.h`.** Only the template `secrets.h.example` (all values
+> empty) is tracked. API keys can also be set at runtime via Web Portal →
+> Settings instead of compile time.
+>
+> A `.env` / `.env.example` file is provided as a documented placeholder only;
+> the firmware reads secrets from `C++` `secrets.h` / NVS, not from environment
+> variables.
 
 ## Building
 
