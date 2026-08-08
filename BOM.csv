@@ -1,5 +1,5 @@
 Category,Manufacturer,Part Number,Component,Qty,Approx Price (INR),Required,Supplier,Purpose
-Main Controller,Espressif,ESP32-P4,ESP32-P4 Development Board,1,TBD,Yes,TBD,Main high-performance controller
+Main Controller,Espressif,ESP32-P4,ESP32-P4 Development Board,1,1600,Yes,TBD,Main high-performance controller
 Connectivity,Espressif,ESP32-C6,ESP32-C6 Wi-Fi/BLE Module/DevKit,1,TBD,Yes,TBD,Wi-Fi 6 + Bluetooth LE connectivity for P4
 Display,Waveshare,5.0-inch IPS Capacitive,800x480 Touch Display,1,4499,Yes,Waveshare,Primary user interface
 Audio,TDK InvenSense,INMP441,I2S MEMS Microphone,1,250,Yes,Amazon,Voice input
