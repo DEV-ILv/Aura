@@ -1,13 +1,14 @@
 Category,Manufacturer,Part Number,Component,Qty,Approx Price (INR),Required,Supplier,Purpose
-Main Controller,Espressif,ESP32-WROOM-32 DevKit V1,ESP32 Development Board,1,650,Yes,Robocraze,Main microcontroller
-Display,Waveshare,5.0-inch IPS Capacitive Touch Display,800x480 Touch Display,1,4499,Yes,Waveshare,Primary user interface
+Main Controller,Espressif,ESP32-P4,ESP32-P4 Development Board,1,TBD,Yes,TBD,Main high-performance controller
+Connectivity,Espressif,ESP32-C6,ESP32-C6 Wi-Fi/BLE Module/DevKit,1,TBD,Yes,TBD,Wi-Fi 6 + Bluetooth LE connectivity for P4
+Display,Waveshare,5.0-inch IPS Capacitive,800x480 Touch Display,1,4499,Yes,Waveshare,Primary user interface
 Audio,TDK InvenSense,INMP441,I2S MEMS Microphone,1,250,Yes,Amazon,Voice input
 Audio,Analog Devices,MAX98357A,I2S Audio Amplifier,1,220,Yes,Amazon,Speaker amplifier
 Audio,Visaton,FRS7 4Ω 10W,Premium Full-Range Speaker,1,950,Yes,Mouser,Voice output
-Lighting,WorldSemi,WS2812B 16 LED Ring,RGB LED Ring,1,420,Yes,Amazon,Status indication
+Lighting,WorldSemi,WS2812B 16 LED Ring,RGB LED Ring,1,420,Yes,Amazon,Status indication / Disco Mode
 Storage,Kingston,Canvas Select Plus 32GB,microSD Card,1,420,Yes,Amazon,Audio assets and storage
 Storage,Generic,SPI SD Module,MicroSD Card Interface Module,1,150,Yes,Amazon,SD interface
-Input,Tontek,TTP223,Capacitive Touch Sensor,1,80,Yes,Amazon,Touch wake button
+Input,Tontek,TTP223,Capacitive Touch Sensor,1,80,Yes,Amazon,Touch wake/control
 Sensors,Bosch,BME280,Temperature Humidity Pressure Sensor,1,380,Yes,Robu,Environmental monitoring
 Sensors,ROHM,BH1750,Ambient Light Sensor,1,180,Yes,Robu,Automatic brightness
 Sensors,Bosch,BMI270,6-Axis IMU,1,320,Yes,Mouser,Motion detection
@@ -20,17 +21,8 @@ Power,Samsung,INR21700-50E,5000mAh Li-ion Battery,1,850,Yes,Robu,Portable power
 Power,Texas Instruments,BQ24074,USB-C Battery Charger Module,1,620,Yes,Mouser,Battery charging
 Power,Texas Instruments,TPS63070,Buck-Boost Regulator,1,780,Yes,Mouser,Stable power supply
 Power,Generic,USB-C Breakout,USB-C Power Connector,1,120,Yes,Amazon,Power input
-Prototype,Generic,830 Point Breadboard,Large Breadboard,2,250,Yes,Amazon,Prototype assembly
-Prototype,Generic,Male-Male Jumper Wire Kit,65pcs,1,180,Yes,Amazon,Wiring
-Prototype,Generic,Male-Female Jumper Wire Kit,40pcs,1,180,Yes,Amazon,Wiring
-Prototype,Generic,Female-Female Jumper Wire Kit,40pcs,1,180,Yes,Amazon,Wiring
-Networking,Espressif,Integrated,Wi-Fi + Bluetooth,1,0,Yes,Integrated,Built into ESP32
-Mechanical,Generic,3D Printed Enclosure,Prototype Case,1,1800,Yes,Local,Protective enclosure
+Mechanical,Generic,3D Printed Enclosure,Production Prototype Case,1,1800,Yes,Local,Protective enclosure
 Mechanical,Generic,M2 Screw Kit,Screws and Standoffs,1,300,Yes,Amazon,Assembly
 Mechanical,JST,PH2.0 Connector Kit,Connectors,1,450,Yes,Amazon,Power and signal connections
-Accessories,Generic,USB-C Cable,Programming Cable,1,250,Yes,Amazon,Programming and power
+Accessories,Generic,USB-C Cable,Programming and Power Cable,1,250,Yes,Amazon,Programming and power
 Accessories,Generic,MicroSD Adapter,Card Reader,1,80,Yes,Amazon,PC data transfer
-Accessories,Generic,Heat Shrink Kit,Heat Shrink Tubing,1,150,Yes,Amazon,Cable management
-Accessories,Generic,Cable Tie Pack,Cable Ties,1,100,Yes,Amazon,Cable management
-Tools,Generic,Soldering Iron Kit,Soldering Kit,1,800,Yes,Amazon,Assembly
-Tools,Generic,60/40 Tin Solder,Solder Wire,1,250,Yes,Amazon,Soldering
