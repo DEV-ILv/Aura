@@ -1,0 +1,22 @@
+Date,Phase,Activity,Hours_Spent,Notes
+7/1/2026,Architecture,Initial AURA assistant architecture and module planning,5,Core firmware architecture and subsystem planning
+7/2/2026,Firmware,ESP32 firmware foundation and FreeRTOS task architecture,7,Task structure queues semaphores watchdog and system initialization
+7/3/2026,Firmware,Peripheral and hardware-manager integration,6,OLED LED touch microphone speaker SD and sensor manager integration
+7/4/2026,Firmware,Connectivity and web/API layer,6,Wi-Fi REST WebSocket web portal and device status architecture
+7/5/2026,Voice,Microphone/I2S integration and audio pipeline debugging,5,INMP441 configuration and audio data handling; prototype testing time excluded
+7/6/2026,Companion App,Flutter application architecture and screens,8,Riverpod providers repositories dashboard settings and connection UI
+7/7/2026,Companion App,Local/remote connection architecture,5,Automatic switching local and cloud connection modes
+7/8/2026,Cloud,Supabase authentication and database integration,6,Auth repository schema RLS policies and cloud device registry
+7/9/2026,Security,Security audit and repository credential cleanup,5,RLS grants secret scanning credential removal and repository hygiene
+7/10/2026,Firmware,Security hardening and production firmware fixes,7,WebSocket authentication Wi-Fi persistence OTA security credentials and rate limiting
+7/11/2026,Release,Flutter verification and release builds,4,Analyze tests APK AAB Windows build and release configuration
+7/12/2026,Documentation,Architecture documentation security contributing and OTA documentation,4,Production documentation and setup guides
+8/3/2026,Cloud,Supabase migration repair and grants verification,3,UUID schema correction RLS and table grants
+8/4/2026,Companion App,Cloud authentication and end-to-end companion refinement,5,Session handling remote dashboard WebSocket auth and connection switching
+8/5/2026,Release,AURA V1 RC1 cleanup verification and production build,4,Flutter cleanup dependency update tests APK and AAB
+8/7/2026,Voice,Touch microphone state machine and voice UX refinement,5,Touch gestures microphone state OLED icon and LED state behavior
+8/7/2026,Voice,Sarvam STT/TTS production integration,6,Async HTTPS STT TTS streaming PCM and TLS configuration
+8/8/2026,UX,Touch setup mode refinement and final interaction specification,3,Single tap mic on double tap mic off five-second setup and state synchronization
+8/8/2026,UX,LED and OLED visual refinement including app-controlled Disco Mode,3,Mic icon LED animations and Disco Mode
+8/8/2026,Documentation,Instruction manual and project documentation planning,2.5,User technical manual API troubleshooting and quick-start documentation
+,,,Total=99.5 hours,
