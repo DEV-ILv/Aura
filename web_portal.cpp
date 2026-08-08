@@ -1053,6 +1053,7 @@ void WebPortal::webSocketBroadcastDashboard() noexcept {
         json += ",\"processing\":" + String((conversationManager.getState() == ConversationState::TRANSCRIBING ||
                                              conversationManager.getState() == ConversationState::THINKING) ? "true" : "false");
         json += ",\"recording\":" + String(conversationManager.isMicActive() ? "true" : "false");
+        json += ",\"mic_active\":" + String(conversationManager.isMicActive() ? "true" : "false");
         json += ",\"lastVoiceTimestamp\":" + String(conversationManager.getLastVoiceTimestampMs());
         json += ",\"wakeSource\":\"" + conversationManager.getLastWakeSource() + "\"";
         json += ",\"touch\":\"" + conversationManager.getLastTouchEvent() + "\"";
@@ -2448,6 +2449,17 @@ void WebPortal::handleApiMicControl() noexcept
     if (doc["calibrate"].is<bool>() && doc["calibrate"].as<bool>()) {
         audioManager.calibrateNoiseFloor();
         sendSuccess("Noise floor recalibrated");
+        return;
+    }
+
+    // Privacy mode: blocks the microphone/listening until re-enabled. This is
+    // the physical "soft mute" that the touch sensor long-press used to expose;
+    // it stays reachable from the Companion App / REST.
+    if (doc["privacy"].is<bool>()) {
+        conversationManager.setPrivacyMode(doc["privacy"].as<bool>());
+        sendSuccess(conversationManager.isPrivacyMode()
+                        ? "Microphone privacy enabled"
+                        : "Microphone privacy disabled");
         return;
     }
 

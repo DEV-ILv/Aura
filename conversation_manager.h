@@ -467,9 +467,7 @@ private:
     // Interaction refinement helpers
 void handleTap() noexcept;
 void handleDoubleTap() noexcept;
-void handleLongPress() noexcept;
 void handleVeryLongPress() noexcept;
-void handleMediumHold() noexcept;
     void handleQuickCommand(const String& transcript) noexcept;
     void checkAutoSleep() noexcept;
     void checkContextReminder() noexcept;
@@ -524,7 +522,8 @@ void handleMediumHold() noexcept;
     String m_lastWakeSource;
     String m_lastTouchEvent;
 
-    // Touch gesture handling (tap, double-tap, long-press, very-long-press)
+    // Touch gesture handling — exactly three gestures, spec-driven:
+    // single tap / double tap / 5-second setup hold.
     bool m_touchActive;
     bool m_touchLastRaw;
     unsigned long m_touchDebounceStart;
@@ -533,6 +532,11 @@ void handleMediumHold() noexcept;
     unsigned long m_lastTapTime;
     bool m_doubleTapPending;
     unsigned long m_doubleTapStart;
+
+    // Set the moment a continuous hold passes SETUP_HOLD_MS so the release
+    // never fires a tap/double-tap as well. Guards enterSetupMode() from
+    // being triggered twice (the very-long-press toggle trap).
+    bool m_setupHoldTriggered;
 
     // Notification queue
     std::vector<String> m_notificationQueue;
@@ -570,12 +574,6 @@ void handleMediumHold() noexcept;
     static constexpr unsigned long kDefaultConversationTimeoutMs = 60000UL;
     static constexpr unsigned long kStateTimeoutMs = 30000UL;
     static constexpr unsigned long kFollowUpDurationMs = 10000UL;
-    static constexpr unsigned long kTouchPollIntervalMs = 20UL;
-    static constexpr unsigned long kMinTapMs = 50UL;         // ignore accidental taps < 50ms
-    static constexpr unsigned long kTapMaxMs = 400UL;
-    static constexpr unsigned long kDoubleTapWindowMs = 500UL;
-    static constexpr unsigned long kLongPressMs = 2000UL;    // 2-3s: mute toggle
-    static constexpr unsigned long kVeryLongPressMs = 5000UL; // 5+s: setup/provisioning
     static constexpr unsigned long kVoiceReTriggerDebounceMs = 800UL;
     static constexpr unsigned long kAutoSleepCheckIntervalMs = 10000UL;
     static constexpr unsigned long kContextReminderIdleMs = 600000UL; // 10 min

@@ -108,9 +108,40 @@ constexpr const char* kCompiler     = __VERSION__;
 //======================================================
 // TOUCH SENSOR
 //======================================================
+//
+// Interaction model (exactly three gestures, final interaction spec):
+//   SINGLE TAP   -> microphone ON, listening
+//   DOUBLE TAP   -> microphone OFF, cancel voice interaction, IDLE
+//   5s HOLD      -> AURA SETUP mode (highest gesture priority)
+//
+// Priority: 5s hold > double tap > single tap. A hold must never
+// accidentally fire a tap, and vice-versa. All timings are non-blocking
+// (millis()-based); see ConversationManager::processTouch().
+//
+// Recommended reference values:
+//   Debounce        50-100 ms
+//   Double-tap      350-500 ms
+//   Setup hold      5000 ms
 
 #define TOUCH_PIN              13
-#define TOUCH_DEBOUNCE         50
+
+// Digital debounce across the raw touch line before state is considered.
+#define TOUCH_DEBOUNCE_MS      80
+
+// Shortest press considered a real tap (shorter = electrical bounce).
+#define TAP_MIN_MS             50UL
+
+// Longest press still treated as a tap (longer = hold, no tap action).
+#define TAP_MAX_MS             400UL
+
+// Max delay between the two releases of a double-tap.
+#define DOUBLE_TAP_WINDOW_MS   400UL
+
+// Continuous-hold duration that enters AURA SETUP mode.
+#define SETUP_HOLD_MS          5000UL
+
+// Touch polling cadence (resulted in the main conversation loop).
+#define TOUCH_POLL_INTERVAL_MS 20UL
 
 //======================================================
 // HARDWARE PROFILE - current prototype (MK-II)

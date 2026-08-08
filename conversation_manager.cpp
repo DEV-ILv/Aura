@@ -71,6 +71,7 @@ ConversationManager::ConversationManager() noexcept
     , m_lastTapTime(0)
     , m_doubleTapPending(false)
     , m_doubleTapStart(0)
+    , m_setupHoldTriggered(false)
     , m_lastActivityTime(0)
     , m_lastPeriodicCheckTime(0)
     , m_autoSleepActive(false)
@@ -166,15 +167,15 @@ void ConversationManager::run() noexcept {
     }
 
     // Double-tap pending timeout (first tap received, waiting for second).
-    // Skipped while a finger is still down so a long/very-long press can take
+    // Skipped while a finger is still down so a 5-second setup hold can take
     // priority over the pending single tap.
-    if (m_doubleTapPending && !m_touchActive && (now - m_doubleTapStart > kDoubleTapWindowMs)) {
+    if (m_doubleTapPending && !m_touchActive && (now - m_doubleTapStart > DOUBLE_TAP_WINDOW_MS)) {
         m_doubleTapPending = false;
         handleTap();
     }
 
     // Touch sensor polling (non-blocking, 20ms interval)
-    if (now - m_lastTouchPollTime >= kTouchPollIntervalMs) {
+    if (now - m_lastTouchPollTime >= TOUCH_POLL_INTERVAL_MS) {
         m_lastTouchPollTime = now;
         processTouch();
     }
@@ -475,60 +476,94 @@ bool ConversationManager::checkAudioSignal() const noexcept {
 }
 
 // ============================================================================
-// Touch Gesture System — dispatches tap / double-tap / long-press / very-long-press
+// Touch Gesture System — exactly THREE gestures, spec-driven:
+//   * SINGLE TAP   -> microphone ON, listening (confirmed only after the
+//                     double-tap window expires, so it can never become a
+//                     single+double, or vice-versa).
+//   * DOUBLE TAP   -> microphone OFF, cancel active voice interaction, IDLE.
+//   * 5s HOLD      -> AURA SETUP mode (highest priority, never a tap).
+//
+// Priority: 5s hold > double tap > single tap. Non-blocking: everything is
+// millis()-based and this runs from the main loop (never delay()).
 // ============================================================================
 
 void ConversationManager::processTouch() noexcept {
     // TTP223 touch sensor (digital, active-high)
-    bool touched = (digitalRead(TOUCH_PIN) == HIGH);
-    unsigned long now = millis();
+    const bool touched = (digitalRead(TOUCH_PIN) == HIGH);
+    const unsigned long now = millis();
 
-    // Debounce
+    // --- Edge-based debounce ------------------------------------------------
+    // Every raw transition restarts the debounce timer. The stable, debounced
+    // state is only re-evaluated after TOUCH_DEBOUNCE_MS without a change.
     if (touched != m_touchLastRaw) {
         m_touchDebounceStart = now;
         m_touchLastRaw = touched;
         return;
     }
-    if (now - m_touchDebounceStart < TOUCH_DEBOUNCE) return;
+    if (now - m_touchDebounceStart < TOUCH_DEBOUNCE_MS) return;
 
     if (touched && !m_touchActive) {
-        // Press started
+        // --- Press: begin tracking a new gesture --------------------------
         m_touchActive = true;
         m_touchPressStart = now;
+        m_setupHoldTriggered = false;
+        LOG_DEBUG("ConversationManager", "TOUCH_DOWN");
+    } else if (touched && m_touchActive) {
+        // --- Still pressed: arm the 5-second setup hold --------------------
+        // Trigger inside the press so the user sees AURA SETUP at exactly
+        // SETUP_HOLD_MS without having to release first, and set the guard so
+        // the eventual release never dispatches a tap/double-tap afterwards.
+        if (!m_setupHoldTriggered && (now - m_touchPressStart >= SETUP_HOLD_MS)) {
+            m_setupHoldTriggered = true;
+            m_doubleTapPending = false;   // a hold must never become a tap
+            if (m_autoSleepActive) {
+                wakeFromSleep();          // setup needs a live, lit screen
+            }
+            LOG_DEBUG("ConversationManager", "SETUP_HOLD 5000ms reached");
+            handleVeryLongPress();        // enter AURA SETUP (purple)
+        }
     } else if (!touched && m_touchActive) {
-        // Release — classify gesture by hold duration
+        // --- Release -------------------------------------------------------
         m_touchActive = false;
-        unsigned long holdMs = now - m_touchPressStart;
+        LOG_DEBUG("ConversationManager", "TOUCH_UP");
 
-        // Wake from auto-sleep on any touch
+        // A completed 5-second setup hold has already handled the gesture.
+        if (m_setupHoldTriggered) {
+            m_setupHoldTriggered = false;
+            return;
+        }
+
+        // Touch wakes AURA from auto-sleep; nothing else happens.
         if (m_autoSleepActive) {
             wakeFromSleep();
             return;
         }
 
-        if (holdMs >= kVeryLongPressMs) {
-            m_doubleTapPending = false;
-            handleVeryLongPress();     // >= 5s — Setup Mode
-        } else if (holdMs >= kLongPressMs) {
-            m_doubleTapPending = false;
-            handleLongPress();           // >= 2s — Microphone Mute
-        } else if (holdMs < kMinTapMs) {
-            // Accidental tap shorter than the debounce window: ignore it.
-            return;
-        } else if (holdMs < kTapMaxMs) {
-            // Quick tap — check for double-tap
-            if (m_doubleTapPending && (now - m_doubleTapStart <= kDoubleTapWindowMs)) {
+        const unsigned long holdMs = now - m_touchPressStart;
+
+        // Sub-debounce bounce / accidental brushing: ignore.
+        if (holdMs < TAP_MIN_MS) return;
+
+        if (holdMs < TAP_MAX_MS) {
+            // Quick tap: single or double tap.
+            if (m_doubleTapPending &&
+                (now - m_doubleTapStart <= DOUBLE_TAP_WINDOW_MS)) {
                 m_doubleTapPending = false;
-                handleDoubleTap();     // two quick taps — Cancel response
+                LOG_DEBUG("ConversationManager", "DOUBLE_TAP");
+                handleDoubleTap();          // 2 quick taps — cancel + idle
             } else {
+                // First tap: mark pending; run() dispatches handleTap() once
+                // the double-tap window expires without a second tap.
                 m_doubleTapPending = true;
+                LOG_DEBUG("ConversationManager", "SINGLE_TAP pending");
                 m_doubleTapStart = now;
-                // handleTap() called on timeout or on next tap
             }
-        } else {
-            handleMediumHold();        // ~400ms..2s — dashboard on demand
+            return;
         }
-        // Medium holds are otherwise used for the on-demand dashboard.
+
+        // A hold shorter than SETUP_HOLD_MS intentionally does nothing:
+        // it must never be a tap, a privacy toggle, or a setup trigger.
+        LOG_DEBUG("ConversationManager", "HOLD(%lu) ignored", holdMs);
     }
 }
 
@@ -543,11 +578,12 @@ void ConversationManager::processButtonPress() noexcept {
         return;
     }
 
-    // Muted (long press): ignore touch-to-listen until unmuted.
+    // Muted/privacy mode: touch never opens the microphone.
     if (m_privacyMode) return;
 
     if (m_currentState == ConversationState::IDLE || m_currentState == ConversationState::COMPLETED) {
         m_lastWakeSource = "touch";
+        LOG_DEBUG("ConversationManager", "MIC_ON (single tap)");
         if (m_pushToTalkEnabled) startMic();
         startConversation();
     }
@@ -565,17 +601,6 @@ void ConversationManager::handleTap() noexcept {
     processButtonPress();
 }
 
-void ConversationManager::handleMediumHold() noexcept {
-    m_lastTouchEvent = "medium_hold";
-    // On-demand dashboard: toggle between the presence face and the widget dashboard.
-    if (displayManager.isDashboardActive()) {
-        displayManager.faceNotify(FaceEvent::TOUCH);
-        displayManager.showFace();
-    } else {
-        displayManager.showDashboard();
-    }
-}
-
 void ConversationManager::handleDoubleTap() noexcept {
     m_lastTouchEvent = "double";
     if (eventBus.isInitialized()) {
@@ -584,17 +609,9 @@ void ConversationManager::handleDoubleTap() noexcept {
     cancelActiveResponse();
 }
 
-void ConversationManager::handleLongPress() noexcept {
-    m_lastTouchEvent = "long";
-    if (eventBus.isInitialized()) {
-        eventBus.publish(EventType::TOUCH_LONG, "ConversationManager", "");
-    }
-    togglePrivacyMode();
-}
-
 void ConversationManager::handleVeryLongPress() noexcept {
     m_lastTouchEvent = "very_long";
-    enterSetupMode();
+    enterSetupMode();   // 5s continuous hold — AURA SETUP
 }
 
 // ============================================================================
@@ -619,7 +636,7 @@ void ConversationManager::cancelActiveResponse() noexcept {
     resetConversation();
     changeState(ConversationState::IDLE);
     m_lastWakeSource = "";
-    LOG_INFO("ConversationManager", "Response cancelled (double tap)");
+    LOG_INFO("ConversationManager", "Voice interaction cancelled (double tap / setup hold)");
 }
 
 // ============================================================================
@@ -632,7 +649,7 @@ bool ConversationManager::isSetupMode() const noexcept {
 
 void ConversationManager::enterSetupMode() noexcept {
     if (m_setupMode) {
-        // Already in setup: toggle back out.
+        // Already in setup (e.g. a second 5s hold): toggle back out.
         exitSetupMode();
         return;
     }
@@ -641,16 +658,36 @@ void ConversationManager::enterSetupMode() noexcept {
     if (eventBus.isInitialized()) {
         eventBus.publish(EventType::ENTER_SETUP, "ConversationManager", "");
     }
+
+    // Force-stop any active voice interaction so setup owns the hardware:
+    // cancel STT/AI/TTS, stop recording, then disable VAD.
+    if (m_currentState == ConversationState::LISTENING ||
+        m_currentState == ConversationState::TRANSCRIBING ||
+        m_currentState == ConversationState::THINKING ||
+        m_currentState == ConversationState::SPEAKING) {
+        cancelActiveResponse();
+    }
+    if (m_micActive) {
+        stopMic();
+    }
     if (audioManager.isInitialized()) {
+        audioManager.stopRecording();
         audioManager.setVoiceActivityMonitoring(false);
     }
-    auraSystem.setMood(AuraMood::SETUP);             // purple
-    if (displayManager.isInitialized()) {
-        displayManager.pinStatus();
-        displayManager.showMessage("Setup Mode", "Wi-Fi provisioning");
-    }
+
+    auraSystem.setMood(AuraMood::SETUP);             // purple, provisioning
+
     if (!wifiManager.isAccessPointMode()) {
         wifiManager.startAccessPoint(Secrets::AP_SSID, Secrets::AP_PASSWORD);
+    }
+
+    if (displayManager.isInitialized()) {
+        displayManager.setMicStatus(MicStatus::MUTED);
+        displayManager.setMicMuted(true);
+        displayManager.pinStatus();
+        // Show the SSID the provisioning (captive) AP actually uses when it
+        // comes up, so the holder knows what to connect to.
+        displayManager.showMessage("AURA SETUP", WiFi.softAPSSID());
     }
     LOG_INFO("ConversationManager", "Entered setup mode (AP: %s)", Secrets::AP_SSID);
 }
@@ -666,6 +703,7 @@ void ConversationManager::exitSetupMode() noexcept {
     }
     auraSystem.enterIdle();
     if (displayManager.isInitialized()) {
+        displayManager.setMicMuted(false);
         displayManager.unpinStatus();
         displayManager.showFace();
     }
@@ -801,7 +839,7 @@ void ConversationManager::setPrivacyMode(bool enabled) noexcept {
     }
     soundManager.playConfirmation();
     if (enabled) {
-        displayManager.showMessage("Microphone Muted", "Tap and hold to unmute");
+        displayManager.showMessage("Microphone Muted", "Unmute via companion app");
     } else {
         displayManager.showFace();
     }

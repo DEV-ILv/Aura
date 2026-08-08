@@ -340,8 +340,10 @@ bool LedRing::isQuietMood(const AuraMood mood) const noexcept {
 }
 
 bool LedRing::isEmergencyMood(const AuraMood mood) const noexcept {
-    // Emergency/priority moods always outrank Disco Mode.
-    return mood == AuraMood::ERROR || mood == AuraMood::CRITICAL || mood == AuraMood::OTA;
+    // Priority moods that always outrank Disco Mode (final interaction spec):
+    // ERROR / CRITICAL / OTA / SETUP / PRIVACY.
+    return mood == AuraMood::ERROR || mood == AuraMood::CRITICAL || mood == AuraMood::OTA ||
+           mood == AuraMood::SETUP || mood == AuraMood::PRIVACY;
 }
 
 void LedRing::clearRing() noexcept {

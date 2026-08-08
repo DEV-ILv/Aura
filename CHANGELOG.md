@@ -6,6 +6,57 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 AURA OS is currently at version `1.0.0` (Mark III "Phoenix"), Development channel.
 Build metrics baseline: 61% flash (1,929,939 / 3,145,728 B) · 24% RAM (79,384 / 327,680 B) · 0 warnings.
 
+## [Unreleased] — Touch, Microphone & Setup Interact Refinement
+
+Makes the physical touch sensor behaviour deterministic: exactly three gestures and
+no accidental activation, per the final interaction spec.
+
+### Changed
+
+- **Gesture model — exactly three gestures.** `ConversationManager::processTouch()`
+  now recognises only: SINGLE TAP (mic on + listening), DOUBLE TAP (mic off +
+  cancel voice interaction + IDLE) and 5s HOLD (AURA SETUP). The previous
+  long-press privacy toggle and medium-hold dashboard-on-demand gestures were
+  removed so a 4-second hold intentionally does nothing (it can never fire a
+  tap, double tap, mute, or setup).
+- **Setup hold fires during the press** — the 5s hold triggers at exactly
+  `SETUP_HOLD_MS` while the finger is still down; `m_setupHoldTriggered` guards
+  the release so it never also dispatches a single/double tap.
+- **Gesture priority** — hold > double tap > single tap. A single tap is confirmed
+  only after the double-tap window expires (never a single→double or
+  double→single).
+- **Setup mode hardening** — `enterSetupMode()` now force-stops any active voice
+  interaction (cancel STT/AI/TTS, stop recording, disable VAD), pins the mic
+  icon to MUTED, and shows `AURA SETUP` + the provisioning AP SSID on the OLED.
+- **LED priority** — `LedRing::isEmergencyMood()` now includes `SETUP` and
+  `PRIVACY`, so Disco Mode can never overwrite the purple setup ring or the
+  privacy red. Full order: ERROR > OTA > SETUP > PRIVACY > DISCO > voice > idle.
+- **Timing constants** — debounce/double-tap/setup times centralised in `config.h`
+  (`TOUCH_DEBOUNCE_MS`, `TAP_MIN_MS`, `TAP_MAX_MS`, `DOUBLE_TAP_WINDOW_MS`,
+  `SETUP_HOLD_MS`, `TOUCH_POLL_INTERVAL_MS`), all `millis()`-based and
+  non-blocking (no `delay()`, no Wi-Fi/STT/TTS waits).
+
+### Added
+
+- `mic_active` field in the WebSocket dashboard payload (alias of recording).
+- `POST /api/mic/control` accepts `"privacy": bool` — the Companion App / REST
+  retains a way to enable and disable microphone privacy now that the touch
+  long-press gesture has been retired.
+- DEBUG-only gesture event logging (`TOUCH_DOWN`, `TOUCH_UP`, `SINGLE_TAP pending`,
+  `DOUBLE_TAP`, `SETUP_HOLD 5000ms reached`, `HOLD ignored`, `MIC_ON`); suppressed
+  in release builds by `CURRENT_LOG_LEVEL`.
+
+### Fixed
+
+- Privacy-mode hint on the OLED no longer tells users to "tap and hold to unmute"
+  (that gesture no longer exists) — it now reads "Unmute via companion app".
+
+### Notes
+
+- Privacy mode remains fully functional; it is just no longer bound to the touch
+  sensor (REST/Companion path).
+- Hardware touch testing is pending physical device validation (see final report).
+
 ## [Unreleased] — Security Hardening V1
 
 Authentication, transport security, and safe-by-default behavior for the public
