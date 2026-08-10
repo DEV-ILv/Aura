@@ -221,6 +221,11 @@ private:
     bool          m_sparkleActive;
     uint8_t       m_sparkleHead;
 
+    // ---- whole-ring brightness flicker (solid status path only) -------------
+    uint8_t       m_flickerLevel;     ///< Current shared brightness level (0..255).
+    uint8_t       m_flickerTarget;    ///< Random-walk target brightness level.
+    unsigned long m_flickerNext;      ///< Next recompute timestamp (ms).
+
     // ---- animation renderers (one per mood) --------------------------------
     void playBoot() noexcept;
     void playIdle() noexcept;
@@ -252,6 +257,18 @@ private:
     void clearRing() noexcept;
     void easeBrightness() noexcept;
     void renderDisco() noexcept;
+
+    // ---- normal SOLID status system -----------------------------------------
+    //
+    // The 16-LED ring is rendered as ONE indicator: every normal AURA state
+    // fills ALL 16 LEDs with a single distinct SOLID colour (no per-LED
+    // movement, chase, comet, tail, pulse, breathe, or rotation). A subtle
+    // whole-ring, synchronised brightness flicker keeps the ring "alive".
+    // This is the normal, state-machine-driven status path and is fully
+    // independent from Disco Mode.
+    [[nodiscard]] bool isSequentialAnimation(AuraMood mood) const noexcept;
+    void renderSolidStatus(const CRGB color, uint8_t loPercent, uint8_t hiPercent,
+                           uint8_t stepMax, uint8_t intervalMinMs, uint8_t intervalMaxMs) noexcept;
 
     // ---- disco animations (one per rotating effect) -------------------------
     void playDiscoRainbowRotate() noexcept;

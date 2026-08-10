@@ -11,31 +11,36 @@
  * AURA's face (OLED) and aura (RGB ring) are ONE system. A single AuraMood
  * drives both, so they always transition together.
  *
- * Moods are deliberately paired 1:1 with the product spec:
+* Moods are deliberately paired 1:1 with the product spec:
  *   Mood            OLED face          RGB aura
  *   -------------   ----------------   -------------------------
- *   IDLE            calm, breathing    LED ring OFF (idle = no light)
- *   LISTENING       wide, focused      deep blue sound wave (VU)
- *   THINKING        scanning           cyan energy flow
- *   PROCESSING      thinking continues soft cyan pulse
- *   SPEAKING        animated mouth     blue-white speech pulse
- *   HAPPY           big smile          warm gold expanding pulse
- *   SUCCESS         happy blink        green outward wave (then OFF)
- *   REMINDER        friendly           golden-yellow ripple
- *   WARNING         concerned          orange heartbeat
- *   ERROR           concerned          red slow breathing
- *   CRITICAL        serious            dark red slow pulse
- *   OTA             progress           purple rotating energy
- *   OFFLINE         calm soft eyes     LED ring OFF
- *   SLEEP           eyes close         LED ring OFF
- *   WAKE            eyes open          small expanding blue pulse (then OFF)
- *   BOOT            logo reveal        single LED fills ring (then OFF)
+ *   IDLE            calm, breathing    solid blue (subtle flicker)
+ *   LISTENING       wide, focused       solid cyan
+ *   THINKING        scanning            solid yellow
+ *   PROCESSING      thinking continues  solid yellow
+ *   SPEAKING        animated mouth      solid white
+ *   HAPPY           big smile           solid gold
+ *   SUCCESS         happy blink         solid mint green (then IDLE)
+ *   REMINDER        friendly            solid amber
+ *   WARNING         concerned           solid red-orange flicker
+ *   ERROR           concerned           solid red (deep flicker)
+ *   CRITICAL        serious             solid dark red
+ *   OTA             progress            solid orange
+ *   OFFLINE         calm soft eyes      solid slate
+ *   SLEEP           eyes close          solid dim navy
+ *   WAKE            eyes open           solid azure (then IDLE)
+ *   BOOT            logo reveal         solid blue
  *
- * Idle power policy: the aura ring is only lit for meaningful events and is
- * kept completely OFF while the system is idle (IDLE / SLEEP / OFFLINE).
- * Transient events (BOOT, SUCCESS, WAKE, WIFI_*) automatically return the
- * ring to OFF when they complete. See led_ring.h for the device-control
- * manual override used for LED tests, and docs/aura-led-state-machine.md.
+ * The normal status path renders EVERY state as one SOLID colour across ALL 16
+ * LEDs (no per-LED travel, chase, comet, tail, pulse, breathe, or rotation).
+ * The only allowed variation is a subtle whole-ring synchronised brightness
+ * flicker. Disco Mode (party lights) is a separate, app-only override.
+ *
+ * Idle power policy: the aura ring is OFF for SLEEP/OFFLINE (power save);
+ * normal IDLE shows a quiet dim-blue presence. Transient events (BOOT,
+ * SUCCESS, WAKE, WIFI_*) automatically return the ring to IDLE when they
+ * complete. See led_ring.h for the device-control manual override used for
+ * LED tests, and docs/aura-led-state-machine.md.
  */
 enum class AuraMood : uint8_t {
     BOOT = 0,

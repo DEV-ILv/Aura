@@ -27,6 +27,7 @@
 #include "performance_manager.h"
 #include "crash_manager.h"
 #include "diagnostics_manager.h"
+#include "error_manager.h"
 #include "knowledge_graph_manager.h"
 #include "goal_manager.h"
 #include "habit_manager.h"
@@ -238,13 +239,21 @@ bool SystemManager::initialize() noexcept {
 
     m_initialized = true;
 
-    // Clear boot loop counter â€” we booted successfully
+    // Clear boot loop counter Ã¢â‚¬â€ we booted successfully
     crashManager.clearBootLoopCounter();
 
     validateCredentials();
 
     if (!m_safeMode) {
         startupGreetingManager.start();
+    }
+
+    // Bring the web portal up only now that all modules have initialized.
+    if (webPortal.initialize()) {
+        webPortal.start();
+        serviceStatusManager.setStatus(ServiceId::SVC_WEB_PORTAL, ServiceStatus::SS_ONLINE);
+        serviceStatusManager.setStatus(ServiceId::SVC_REST, ServiceStatus::SS_ONLINE);
+        serviceStatusManager.setStatus(ServiceId::SVC_WEBSOCKET, ServiceStatus::SS_ONLINE);
     }
 
     changeState(SystemState::READY);
@@ -539,7 +548,6 @@ static void bootProgressWdt() noexcept {
     }
     unsigned long now = millis();
     if (now - s_bootStageLastLogMs >= 25) {
-        Logger::info("SystemManager", "[boot +%lu ms]", now - s_bootStageStartMs);
         s_bootStageLastLogMs = now;
     }
 }
@@ -600,6 +608,9 @@ bool SystemManager::initializeModules() noexcept {
     if (!storageManager.initialize()) {
         Logger::error(kLogCategory, "Failed to initialize %s (continuing)", kModuleNames[0]);
         serviceStatusManager.setStatus(ServiceId::SVC_STORAGE, ServiceStatus::SS_ERROR);
+        errorManager.report(AuraErrorSeverity::ERROR, "Storage", "STORAGE_INIT_FAIL",
+                            "Storage backend failed to initialize",
+                            "SPIFFS/SD storage is unavailable; error history will be RAM-only");
     } else {
         serviceStatusManager.setStatus(ServiceId::SVC_STORAGE, ServiceStatus::SS_ONLINE);
     }
@@ -607,6 +618,12 @@ bool SystemManager::initializeModules() noexcept {
         storageManager.isSDMounted() ? ServiceStatus::SS_ONLINE : ServiceStatus::SS_OFFLINE);
     bootProgressWdt();
     m_initModuleIndex = 1;
+
+    // ErrorManager: needs StorageManager for persistence but can operate
+    // RAM-only if storage is down, so it is brought up before anything else
+    // that could want to report an init failure.
+    Logger::info(kLogCategory, "Initializing: ErrorManager");
+    errorManager.initialize();
 
     // 2. MemoryManager (needs StorageManager)
     if (!m_safeMode) {
@@ -622,13 +639,16 @@ bool SystemManager::initializeModules() noexcept {
     Logger::info(kLogCategory, "Initializing: ServiceManager");
     serviceManager.Initialize();
 
+
     Logger::info(kLogCategory, "Initializing: CapabilityManager");
     capabilityManager.Initialize();
     serviceManager.Register(&capabilityManager);
 
+
     Logger::info(kLogCategory, "Initializing: PlatformAbstraction");
     platform.Initialize();
     serviceManager.Register(&platform);
+
 
     Logger::info(kLogCategory, "Initializing: TaskScheduler");
     taskScheduler.Initialize();
@@ -651,6 +671,9 @@ bool SystemManager::initializeModules() noexcept {
                     Logger::warning(kLogCategory, "Display not detected - AURA Headless Mode Enabled");
                 } else {
                     Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[2]);
+                    errorManager.report(AuraErrorSeverity::CRITICAL, "Display", "OLED_INIT_FAIL",
+                                        "OLED display failed to initialize",
+                                        "Boot aborted because the display is required and headless mode is off");
                     return false;
                 }
             } else {
@@ -674,6 +697,8 @@ bool SystemManager::initializeModules() noexcept {
     Logger::info(kLogCategory, "Initializing: %s", kModuleNames[1]);
     if (!wifiManager.initialize()) {
         Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[1]);
+        errorManager.report(AuraErrorSeverity::CRITICAL, "WiFi", "WIFI_MANAGER_INIT_FAIL",
+                            "WiFi manager failed to initialize", "");
         return false;
     }
     serviceStatusManager.setStatus(ServiceId::SVC_WIFI, ServiceStatus::SS_ONLINE);
@@ -775,16 +800,11 @@ bool SystemManager::initializeModules() noexcept {
         Logger::info(kLogCategory, "AudioAssetManager OFFLINE (no speaker connected)");
     }
 
-    // 8. WebPortal (needs WiFi)
+// 8. WebPortal (needs WiFi) - deferred to the end of init so the ~34 KB
+    // it reserves (routes, server, WebSocket stack) stays free while the
+    // memory-heavy late modules (CommandPalette, SceneEngine, Executive)
+    // initialize. The portal is brought up right before READY below.
     Logger::info(kLogCategory, "Initializing: %s", kModuleNames[10]);
-    if (!webPortal.initialize()) {
-        Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[10]);
-        return false;
-    }
-    webPortal.start();
-    serviceStatusManager.setStatus(ServiceId::SVC_WEB_PORTAL, ServiceStatus::SS_ONLINE);
-    serviceStatusManager.setStatus(ServiceId::SVC_REST, ServiceStatus::SS_ONLINE);
-    serviceStatusManager.setStatus(ServiceId::SVC_WEBSOCKET, ServiceStatus::SS_ONLINE);
     displayManager.showBoot(70);
     bootProgressWdt();
     m_initModuleIndex = 8;
@@ -1096,6 +1116,9 @@ bool SystemManager::initializeModules() noexcept {
         Logger::info(kLogCategory, "Initializing: %s", kModuleNames[41]);
         if (!eventBus.initialize()) {
             Logger::error(kLogCategory, "Failed to initialize %s", kModuleNames[41]);
+            errorManager.report(AuraErrorSeverity::ERROR, "EventBus", "EVENT_BUS_INIT_FAIL",
+                                "Event bus failed to initialize",
+                                "System services depending on the event bus are degraded");
             return false;
         }
     }
@@ -1178,29 +1201,36 @@ bool SystemManager::initializeModules() noexcept {
         aiPipeline.Initialize();
         serviceManager.Register(&aiPipeline);
 
+
         Logger::info(kLogCategory, "Initializing: CommandPalette");
         commandPalette.Initialize();
         serviceManager.Register(&commandPalette);
+
 
         Logger::info(kLogCategory, "Initializing: SceneEngine");
         sceneEngine.Initialize();
         serviceManager.Register(&sceneEngine);
 
+
         Logger::info(kLogCategory, "Initializing: WorkflowEngine");
         workflowEngine.Initialize();
         serviceManager.Register(&workflowEngine);
+
 
         Logger::info(kLogCategory, "Initializing: LogManager");
         logManager.Initialize();
         serviceManager.Register(&logManager);
 
+
         Logger::info(kLogCategory, "Initializing: SecurityManager");
         securityManager.Initialize();
         serviceManager.Register(&securityManager);
 
+
         Logger::info(kLogCategory, "Initializing: ResilienceManager");
         resilienceManager.Initialize();
         serviceManager.Register(&resilienceManager);
+
 
         Logger::info(kLogCategory, "Initializing: DiagnosticSystem");
         diagnosticSystem.Initialize();
@@ -1253,6 +1283,7 @@ void SystemManager::updateModules() noexcept {
         automationManager.update();
         startupGreetingManager.update();
         tinyAIManager.update();
+        errorManager.update();
         timelineManager.update();
         briefingManager.update();
         semanticSearchManager.update();
@@ -1352,6 +1383,11 @@ void SystemManager::printBootBanner() noexcept {
 void SystemManager::monitorMemory() noexcept {
     m_info.freeHeap = ESP.getFreeHeap();
     m_info.minimumHeap = ESP.getMinFreeHeap();
+    if (m_info.freeHeap < 20000) {
+        errorManager.report(AuraErrorSeverity::WARNING, "Memory", "LOW_HEAP",
+                            "Low free heap",
+                            String("Free heap dropped to ") + String(m_info.freeHeap) + " bytes");
+    }
 }
 
 void SystemManager::monitorTasks() noexcept {

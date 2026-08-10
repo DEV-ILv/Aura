@@ -61,6 +61,7 @@ private:
     static constexpr const char* kNvsNamespace = STARTUP_GREETING_NVS_NAMESPACE;
     static constexpr unsigned long kMinDisplayMs = 2000UL;
     static constexpr unsigned long kMaxDisplayMs = 15000UL;
+    static constexpr unsigned long kSpeakTimeoutMs = 8000UL;
 
     void loadSettings() noexcept;
     void saveSettings() noexcept;

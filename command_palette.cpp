@@ -1,5 +1,6 @@
 #include "command_palette.h"
 #include <algorithm>
+#include <new>
 #include <WiFi.h>
 #include "ui_framework.h"
 #include "system_manager.h"
@@ -35,7 +36,13 @@ bool CommandPalette::RegisterCommand(const Command& cmd, CommandHandler handler)
     CommandEntry entry;
     entry.cmd = cmd;
     entry.handler = std::move(handler);
-    m_commands.push_back(std::move(entry));
+    try {
+        m_commands.push_back(std::move(entry));
+    } catch (const std::bad_alloc&) {
+        LOG_ERROR(kLogCategory, "RegisterCommand: heap exhausted for '%s', skipping",
+            cmd.id.c_str());
+        return false;
+    }
     return true;
 }
 

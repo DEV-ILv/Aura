@@ -158,6 +158,7 @@ bool SarvamClient::isAvailable() const noexcept {
 void SarvamClient::cancel() noexcept {
     m_phase = Phase::IDLE;
     m_kind = Kind::NONE;
+    m_finalized = false;
     m_http.close();
     m_body = nullptr;
     m_bodyLen = 0;
@@ -182,6 +183,7 @@ void SarvamClient::startTranscription(const uint8_t* body, size_t bodyLen) noexc
         m_httpErr = SarvamHttpError::NETWORK;
         m_stt.clear();
         m_stt.ok = false;
+        m_finalized = true;
         return;
     }
 
@@ -210,7 +212,7 @@ void SarvamClient::startTranscription(const uint8_t* body, size_t bodyLen) noexc
 }
 
 bool SarvamClient::sttInProgress() const noexcept { return m_kind == Kind::STT && m_phase != Phase::IDLE; }
-bool SarvamClient::sttDone() const noexcept { return m_kind == Kind::STT && m_phase == Phase::IDLE; }
+bool SarvamClient::sttDone() const noexcept { return m_finalized && m_kind == Kind::STT && m_phase == Phase::IDLE; }
 const SarvamSttResult& SarvamClient::sttResult() const noexcept { return m_stt; }
 
 // ---- TTS -------------------------------------------------------------------
@@ -234,6 +236,7 @@ void SarvamClient::startSynthesis(const String& text, PcmChunkCallback cb, void*
         m_httpErr = text.isEmpty() ? SarvamHttpError::HTTP_ERROR : SarvamHttpError::NETWORK;
         m_kind = Kind::NONE;
         m_phase = Phase::IDLE;
+        m_finalized = true;
         return;
     }
 
@@ -273,7 +276,7 @@ void SarvamClient::startSynthesis(const String& text, PcmChunkCallback cb, void*
 }
 
 bool SarvamClient::ttsInProgress() const noexcept { return m_kind == Kind::TTS && m_phase != Phase::IDLE; }
-bool SarvamClient::ttsDone() const noexcept { return m_kind == Kind::TTS && m_phase == Phase::IDLE; }
+bool SarvamClient::ttsDone() const noexcept { return m_finalized && m_kind == Kind::TTS && m_phase == Phase::IDLE; }
 bool SarvamClient::ttsOk() const noexcept { return m_ttsOk; }
 unsigned long SarvamClient::ttsLatencyMs() const noexcept { return m_ttsLatency; }
 
@@ -517,6 +520,7 @@ void SarvamClient::flushB64() noexcept {
 
 void SarvamClient::finalizeResponse() noexcept {
     m_phase = Phase::IDLE;
+    m_finalized = true;
     m_http.close();
     if (m_kind == Kind::STT) finalizeStt();
     else finalizeTts();
@@ -531,13 +535,11 @@ void SarvamClient::finalizeStt() noexcept {
             m_stt.transcript = t;
         }
     }
-    m_kind = Kind::NONE;
 }
 
 void SarvamClient::finalizeTts() noexcept {
     m_ttsLatency = (unsigned long)(millis() - m_startedAt);
     m_ttsOk = (m_status == 200) && (m_audioBytes > 0);
-    m_kind = Kind::NONE;
 }
 
 void SarvamClient::abort(SarvamHttpError err, bool transient) noexcept {
@@ -556,8 +558,8 @@ void SarvamClient::abort(SarvamHttpError err, bool transient) noexcept {
     }
     m_httpErr = err;
     m_phase = Phase::IDLE;
+    m_finalized = true;
     if (m_kind == Kind::STT) m_stt.ok = false;
-    m_kind = Kind::NONE;
 }
 
 void SarvamClient::maskKey(const String& key, String& masked) noexcept {

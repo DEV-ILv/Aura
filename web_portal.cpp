@@ -1,7 +1,9 @@
-#include "web_portal.h"
+﻿#include "web_portal.h"
+#include <uri/UriGlob.h>
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <functional>
+#include <new>
 #include <ArduinoJson.h>
 #include <mbedtls/pk.h>
 #include "service_status_manager.h"
@@ -25,6 +27,7 @@
 #include "crash_manager.h"
 #include "uptime_monitor.h"
 #include "diagnostics_manager.h"
+#include "error_manager.h"
 #include "memory_manager.h"
 #include "knowledge_graph_manager.h"
 #include "goal_manager.h"
@@ -114,16 +117,23 @@ bool WebPortal::initialize() noexcept
 {
     Logger::info("WebPortal", "Initializing web portal");
 
-    if (!registerRoutes())
+    try
     {
-        Logger::error("WebPortal", "Failed to register standard routes");
-        return false;
-    }
+        if (!registerRoutes())
+        {
+            Logger::error("WebPortal", "Failed to register standard routes");
+            return false;
+        }
 
-    if (!registerApiRoutes())
+        if (!registerApiRoutes())
+        {
+            Logger::error("WebPortal", "Failed to register API routes");
+            return false;
+        }
+    }
+    catch (const std::bad_alloc&)
     {
-        Logger::error("WebPortal", "Failed to register API routes");
-        return false;
+        Logger::error("WebPortal", "Heap exhausted while registering routes; continuing with partial routes");
     }
 
     loadAuthCredentials();
@@ -148,7 +158,14 @@ bool WebPortal::start() noexcept
     m_server.collectHeaders(authHeaderKeys, 1);
 
     m_server.begin();
-    m_webSocket.begin();
+    try
+    {
+        m_webSocket.begin();
+    }
+    catch (const std::bad_alloc&)
+    {
+        Logger::error("WebPortal", "Heap exhausted starting WebSocket server; HTTP only");
+    }
     m_webSocket.onEvent(std::bind(&WebPortal::handleWebSocketEvent, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
 
     // Reject cross-origin WebSocket handshakes (CSRF protection). Browser
@@ -231,6 +248,11 @@ void WebPortal::update() noexcept
 
     // Broadcast module status changes (headless detection, online/offline)
     webSocketBroadcastModuleStatus();
+
+    // Push one-shot WebSocket alerts for new diagnostic ERROR/CRITICAL events
+    if (errorManager.hasPendingBroadcast()) {
+        webSocketBroadcast(errorManager.takeBroadcastJson());
+    }
 
     // Periodic WebSocket ping to keep alive
     if (now - m_lastWsPing >= WS_PING_INTERVAL_MS) {
@@ -379,200 +401,189 @@ bool WebPortal::registerRoutes() noexcept
 
 bool WebPortal::registerApiRoutes() noexcept
 {
-    m_server.on("/api/status", HTTP_GET, [this]() { handleApiStatus(); });
-    m_server.on("/api/uptime", HTTP_GET, [this]() { handleApiUptime(); });
-    m_server.on("/api/wifi", HTTP_GET, [this]() { handleApiWifi(); });
-    m_server.on("/api/wifi", HTTP_POST, [this]() { handleApiWifi(); });
-    m_server.on("/api/settings", HTTP_GET, [this]() { handleApiSettings(); });
-    m_server.on("/api/settings", HTTP_POST, [this]() { handleApiSettings(); });
+    // Register the entire /api surface as two wildcard routes and dispatch by
+    // path+method at request time. Registering each endpoint separately
+    // allocates a FunctionRequestHandler per route (~52 KB total on this
+    // firmware), which exhausts heap and aborts on boards without PSRAM.
+    struct ApiRoute
+    {
+        const char *path;
+        HTTPMethod method;
+        void (WebPortal::*handler)();
+    };
 
-    // New feature API routes
-    m_server.on("/api/plugins", HTTP_GET, [this]() { handleApiPlugins(); });
-    m_server.on("/api/plugins/enable", HTTP_POST, [this]() { handleApiPluginEnable(); });
-    m_server.on("/api/plugins/disable", HTTP_POST, [this]() { handleApiPluginDisable(); });
+    static const ApiRoute kRoutes[] = {
+        {"/api/audio/control", HTTP_POST, &WebPortal::handleApiAudioControl},
+        {"/api/auth/change-password", HTTP_POST, &WebPortal::handleApiAuthChangePassword},
+        {"/api/auth/login", HTTP_POST, &WebPortal::handleApiAuthLogin},
+        {"/api/auth/logout", HTTP_POST, &WebPortal::handleApiAuthLogout},
+        {"/api/auth/status", HTTP_GET, &WebPortal::handleApiAuthStatus},
+        {"/api/automation/nl/match", HTTP_POST, &WebPortal::handleApiAutomationNLMatch},
+        {"/api/automation/nl/patterns", HTTP_GET, &WebPortal::handleApiAutomationNLPatterns},
+        {"/api/automations", HTTP_GET, &WebPortal::handleApiAutomations},
+        {"/api/automations", HTTP_POST, &WebPortal::handleApiAutomationCreate},
+        {"/api/automations/delete", HTTP_POST, &WebPortal::handleApiAutomationDelete},
+        {"/api/automations/toggle", HTTP_POST, &WebPortal::handleApiAutomationToggle},
+        {"/api/briefing/evening", HTTP_GET, &WebPortal::handleApiBriefingEvening},
+        {"/api/briefing/morning", HTTP_GET, &WebPortal::handleApiBriefingMorning},
+        {"/api/companion/devices", HTTP_GET, &WebPortal::handleApiCompanionDevices},
+        {"/api/companion/devices", HTTP_POST, &WebPortal::handleApiCompanionDevices},
+        {"/api/companion/messages", HTTP_GET, &WebPortal::handleApiCompanionMessages},
+        {"/api/context", HTTP_GET, &WebPortal::handleApiContext},
+        {"/api/context/history", HTTP_GET, &WebPortal::handleApiContextHistory},
+        {"/api/crashes", HTTP_GET, &WebPortal::handleApiCrashes},
+        {"/api/crashes/ack", HTTP_POST, &WebPortal::handleApiCrashAck},
+        {"/api/crashes/clear", HTTP_POST, &WebPortal::handleApiCrashClear},
+        {"/api/dashboard/recent", HTTP_GET, &WebPortal::handleApiDashboardRecent},
+        {"/api/dashboard/summary", HTTP_GET, &WebPortal::handleApiDashboardSummary},
+        {"/api/decisions", HTTP_GET, &WebPortal::handleApiDecisions},
+        {"/api/decisions/explain", HTTP_GET, &WebPortal::handleApiDecisionExplain},
+        {"/api/decisions/make", HTTP_POST, &WebPortal::handleApiDecisionMake},
+        {"/api/decisions/rank", HTTP_GET, &WebPortal::handleApiDecisionRank},
+        {"/api/developer", HTTP_GET, &WebPortal::handleApiDeveloper},
+        {"/api/developer/export", HTTP_GET, &WebPortal::handleApiDeveloperExport},
+        {"/api/diagnostics", HTTP_GET, &WebPortal::handleApiDiagnostics},
+        {"/api/display/control", HTTP_GET, &WebPortal::handleApiDisplayControl},
+        {"/api/display/control", HTTP_POST, &WebPortal::handleApiDisplayControl},
+        {"/api/documents", HTTP_GET, &WebPortal::handleApiDocuments},
+        {"/api/documents", HTTP_POST, &WebPortal::handleApiDocumentUpload},
+        {"/api/documents/content", HTTP_GET, &WebPortal::handleApiDocumentContent},
+        {"/api/documents/delete", HTTP_POST, &WebPortal::handleApiDocumentDelete},
+        {"/api/documents/search", HTTP_GET, &WebPortal::handleApiDocumentSearch},
+        {"/api/espnow/discovery", HTTP_POST, &WebPortal::handleApiEspNowDiscovery},
+        {"/api/espnow/nodes", HTTP_GET, &WebPortal::handleApiEspNowNodes},
+        {"/api/espnow/pair", HTTP_POST, &WebPortal::handleApiEspNowPair},
+        {"/api/espnow/status", HTTP_GET, &WebPortal::handleApiEspNowStatus},
+        {"/api/espnow/unpair", HTTP_POST, &WebPortal::handleApiEspNowUnpair},
+        {"/api/errors", HTTP_GET, &WebPortal::handleApiErrors},
+        {"/api/errors/ack", HTTP_POST, &WebPortal::handleApiErrorsAck},
+        {"/api/errors/active", HTTP_GET, &WebPortal::handleApiErrorsActive},
+        {"/api/errors/clear", HTTP_POST, &WebPortal::handleApiErrorsClear},
+        {"/api/errors/count", HTTP_GET, &WebPortal::handleApiErrorsCount},
+        {"/api/functions", HTTP_GET, &WebPortal::handleApiFunctions},
+        {"/api/functions/execute", HTTP_POST, &WebPortal::handleApiFunctionExecute},
+        {"/api/goals", HTTP_GET, &WebPortal::handleApiGoals},
+        {"/api/goals", HTTP_POST, &WebPortal::handleApiGoalCreate},
+        {"/api/goals/delete", HTTP_POST, &WebPortal::handleApiGoalDelete},
+        {"/api/goals/update", HTTP_POST, &WebPortal::handleApiGoalUpdate},
+        {"/api/graph/relationships", HTTP_GET, &WebPortal::handleApiGraphRelationships},
+        {"/api/habits", HTTP_GET, &WebPortal::handleApiHabits},
+        {"/api/habits", HTTP_POST, &WebPortal::handleApiHabitCreate},
+        {"/api/habits/delete", HTTP_POST, &WebPortal::handleApiHabitDelete},
+        {"/api/habits/toggle", HTTP_POST, &WebPortal::handleApiHabitToggle},
+        {"/api/knowledge-graph", HTTP_GET, &WebPortal::handleApiKnowledgeGraph},
+        {"/api/knowledge-graph/edge", HTTP_POST, &WebPortal::handleApiKnowledgeGraphEdge},
+        {"/api/knowledge-graph/node", HTTP_POST, &WebPortal::handleApiKnowledgeGraphNode},
+        {"/api/knowledge-graph/traverse", HTTP_GET, &WebPortal::handleApiKnowledgeGraphTraverse},
+        {"/api/learning", HTTP_GET, &WebPortal::handleApiLearning},
+        {"/api/learning/observe", HTTP_POST, &WebPortal::handleApiLearningObserve},
+        {"/api/led/control", HTTP_GET, &WebPortal::handleApiLedControl},
+        {"/api/led/control", HTTP_POST, &WebPortal::handleApiLedControl},
+        {"/api/memories/maintenance", HTTP_POST, &WebPortal::handleApiMemoriesMaintenance},
+        {"/api/memories/ranked", HTTP_GET, &WebPortal::handleApiMemoriesRanked},
+        {"/api/memories/search", HTTP_GET, &WebPortal::handleApiMemoriesSearch},
+        {"/api/memory/archive", HTTP_POST, &WebPortal::handleApiMemoryArchive},
+        {"/api/memory/archived", HTTP_GET, &WebPortal::handleApiMemoryArchived},
+        {"/api/memory/compare", HTTP_GET, &WebPortal::handleApiMemoryCompare},
+        {"/api/memory/pin", HTTP_POST, &WebPortal::handleApiMemoryPin},
+        {"/api/memory/pinned", HTTP_GET, &WebPortal::handleApiMemoryPinned},
+        {"/api/memory/restore", HTTP_POST, &WebPortal::handleApiMemoryRestore},
+        {"/api/memory/revisions", HTTP_GET, &WebPortal::handleApiMemoryRevisions},
+        {"/api/mic/control", HTTP_POST, &WebPortal::handleApiMicControl},
+        {"/api/mic/level", HTTP_GET, &WebPortal::handleApiMicLevel},
+        {"/api/offline_ai/disable", HTTP_POST, &WebPortal::handleApiOfflineAIDisable},
+        {"/api/offline_ai/enable", HTTP_POST, &WebPortal::handleApiOfflineAIEnable},
+        {"/api/offline_ai/status", HTTP_GET, &WebPortal::handleApiOfflineAIStatus},
+        {"/api/offline_ai/test", HTTP_POST, &WebPortal::handleApiOfflineAITest},
+        {"/api/patterns", HTTP_GET, &WebPortal::handleApiPatterns},
+        {"/api/performance", HTTP_GET, &WebPortal::handleApiPerformance},
+        {"/api/personality", HTTP_GET, &WebPortal::handleApiPersonality},
+        {"/api/personality/active", HTTP_GET, &WebPortal::handleApiPersonalityActive},
+        {"/api/personality/active", HTTP_POST, &WebPortal::handleApiPersonalityActive},
+        {"/api/planner", HTTP_GET, &WebPortal::handleApiPlanner},
+        {"/api/planner/suggest", HTTP_GET, &WebPortal::handleApiPlannerSuggest},
+        {"/api/planner/task", HTTP_POST, &WebPortal::handleApiPlannerTask},
+        {"/api/plugins", HTTP_GET, &WebPortal::handleApiPlugins},
+        {"/api/plugins/disable", HTTP_POST, &WebPortal::handleApiPluginDisable},
+        {"/api/plugins/enable", HTTP_POST, &WebPortal::handleApiPluginEnable},
+        {"/api/plugins/marketplace", HTTP_GET, &WebPortal::handleApiPluginsMarketplace},
+        {"/api/plugins/marketplace/register", HTTP_POST, &WebPortal::handleApiPluginsMarketplaceRegister},
+        {"/api/predictions", HTTP_GET, &WebPortal::handleApiPredictions},
+        {"/api/predictions/run", HTTP_POST, &WebPortal::handleApiPredictionRun},
+        {"/api/recommendations", HTTP_GET, &WebPortal::handleApiRecommendations},
+        {"/api/recommendations/act", HTTP_POST, &WebPortal::handleApiRecommendAct},
+        {"/api/recommendations/dismiss", HTTP_POST, &WebPortal::handleApiRecommendDismiss},
+        {"/api/recommendations/generate", HTTP_POST, &WebPortal::handleApiRecommendGenerate},
+        {"/api/reflections", HTTP_GET, &WebPortal::handleApiReflections},
+        {"/api/reflections/run", HTTP_POST, &WebPortal::handleApiReflectionRun},
+        {"/api/sd/diagnostics", HTTP_GET, &WebPortal::handleApiSdDiagnostics},
+        {"/api/search/semantic", HTTP_GET, &WebPortal::handleApiSemanticSearch},
+        {"/api/settings", HTTP_GET, &WebPortal::handleApiSettings},
+        {"/api/settings", HTTP_POST, &WebPortal::handleApiSettings},
+        {"/api/skills", HTTP_GET, &WebPortal::handleApiSkills},
+        {"/api/skills", HTTP_POST, &WebPortal::handleApiSkillAdd},
+        {"/api/skills/delete", HTTP_POST, &WebPortal::handleApiSkillDelete},
+        {"/api/skills/disable", HTTP_POST, &WebPortal::handleApiSkillDisable},
+        {"/api/skills/enable", HTTP_POST, &WebPortal::handleApiSkillEnable},
+        {"/api/skills/studio/duplicate", HTTP_POST, &WebPortal::handleApiSkillsStudioDuplicate},
+        {"/api/skills/studio/export", HTTP_GET, &WebPortal::handleApiSkillsStudioExport},
+        {"/api/skills/studio/import", HTTP_POST, &WebPortal::handleApiSkillsStudioImport},
+        {"/api/skills/studio/update", HTTP_POST, &WebPortal::handleApiSkillsStudioUpdate},
+        {"/api/startup/settings", HTTP_GET, &WebPortal::handleApiStartupSettings},
+        {"/api/startup/settings", HTTP_POST, &WebPortal::handleApiStartupSettings},
+        {"/api/status", HTTP_GET, &WebPortal::handleApiStatus},
+        {"/api/study/flashcards", HTTP_GET, &WebPortal::handleApiStudyFlashcards},
+        {"/api/study/flashcards", HTTP_POST, &WebPortal::handleApiStudyFlashcards},
+        {"/api/study/sessions", HTTP_GET, &WebPortal::handleApiStudySessions},
+        {"/api/study/sessions", HTTP_POST, &WebPortal::handleApiStudySessions},
+        {"/api/study/stats", HTTP_GET, &WebPortal::handleApiStudyStats},
+        {"/api/study/subjects", HTTP_GET, &WebPortal::handleApiStudySubjects},
+        {"/api/study/subjects", HTTP_POST, &WebPortal::handleApiStudySubjects},
+        {"/api/summaries", HTTP_GET, &WebPortal::handleApiSummaries},
+        {"/api/summaries/delete", HTTP_POST, &WebPortal::handleApiSummaryDelete},
+        {"/api/summaries/today", HTTP_GET, &WebPortal::handleApiSummaryToday},
+        {"/api/timeline", HTTP_GET, &WebPortal::handleApiTimeline},
+        {"/api/timeline/search", HTTP_GET, &WebPortal::handleApiTimelineSearch},
+        {"/api/uptime", HTTP_GET, &WebPortal::handleApiUptime},
+        {"/api/vault", HTTP_GET, &WebPortal::handleApiVault},
+        {"/api/vault", HTTP_POST, &WebPortal::handleApiVaultSet},
+        {"/api/vault/backup", HTTP_POST, &WebPortal::handleApiVaultBackup},
+        {"/api/vault/delete", HTTP_POST, &WebPortal::handleApiVaultDelete},
+        {"/api/version", HTTP_GET, &WebPortal::handleApiVersion},
+        {"/api/wake-word/calibrate", HTTP_POST, &WebPortal::handleApiWakeWordCalibrate},
+        {"/api/wake-word/phrases", HTTP_GET, &WebPortal::handleApiWakeWordPhrases},
+        {"/api/wake-word/phrases", HTTP_POST, &WebPortal::handleApiWakeWordAddPhrase},
+        {"/api/wake-word/phrases/remove", HTTP_POST, &WebPortal::handleApiWakeWordRemovePhrase},
+        {"/api/wake-word/settings", HTTP_GET, &WebPortal::handleApiWakeWordSettings},
+        {"/api/wake-word/settings", HTTP_POST, &WebPortal::handleApiWakeWordSettings},
+        {"/api/wake-word/stats/reset", HTTP_POST, &WebPortal::handleApiWakeWordResetStats},
+        {"/api/wake-word/status", HTTP_GET, &WebPortal::handleApiWakeWordStatus},
+        {"/api/wifi", HTTP_GET, &WebPortal::handleApiWifi},
+        {"/api/wifi", HTTP_POST, &WebPortal::handleApiWifi},
+        {"/api/wifi/forget", HTTP_POST, &WebPortal::handleApiWifiForget},
+        {"/api/wifi/scan", HTTP_POST, &WebPortal::handleApiWifiScan},
+        {"/api/workspaces", HTTP_GET, &WebPortal::handleApiWorkspaces},
+        {"/api/workspaces", HTTP_POST, &WebPortal::handleApiWorkspaceCreate},
+        {"/api/workspaces/activate", HTTP_POST, &WebPortal::handleApiWorkspaceActivate},
+        {"/api/workspaces/delete", HTTP_POST, &WebPortal::handleApiWorkspaceDelete},
+        {"/api/workspaces/member", HTTP_POST, &WebPortal::handleApiWorkspaceMember},
+    };
+    constexpr size_t kRouteCount = sizeof(kRoutes) / sizeof(kRoutes[0]);
 
-    m_server.on("/api/skills", HTTP_GET, [this]() { handleApiSkills(); });
-    m_server.on("/api/skills", HTTP_POST, [this]() { handleApiSkillAdd(); });
-    m_server.on("/api/skills/delete", HTTP_POST, [this]() { handleApiSkillDelete(); });
-    m_server.on("/api/skills/enable", HTTP_POST, [this]() { handleApiSkillEnable(); });
-    m_server.on("/api/skills/disable", HTTP_POST, [this]() { handleApiSkillDisable(); });
+    m_server.on(UriGlob("/api/*"), HTTP_ANY, [this]() {
+        const String uri = m_server.uri();
+        const HTTPMethod method = m_server.method();
+        for (size_t i = 0; i < kRouteCount; ++i) {
+            if (method == kRoutes[i].method && uri == kRoutes[i].path) {
+                (this->*kRoutes[i].handler)();
+                return;
+            }
+        }
+        m_server.send(404, "text/plain", "Not Found");
+    });
 
-    m_server.on("/api/personality", HTTP_GET, [this]() { handleApiPersonality(); });
-    m_server.on("/api/personality/active", HTTP_GET, [this]() { handleApiPersonalityActive(); });
-    m_server.on("/api/personality/active", HTTP_POST, [this]() { handleApiPersonalityActive(); });
-
-    m_server.on("/api/context", HTTP_GET, [this]() { handleApiContext(); });
-    m_server.on("/api/context/history", HTTP_GET, [this]() { handleApiContextHistory(); });
-
-    m_server.on("/api/timeline", HTTP_GET, [this]() { handleApiTimeline(); });
-    m_server.on("/api/timeline/search", HTTP_GET, [this]() { handleApiTimelineSearch(); });
-
-    m_server.on("/api/briefing/morning", HTTP_GET, [this]() { handleApiBriefingMorning(); });
-    m_server.on("/api/briefing/evening", HTTP_GET, [this]() { handleApiBriefingEvening(); });
-
-    m_server.on("/api/search/semantic", HTTP_GET, [this]() { handleApiSemanticSearch(); });
-
-    m_server.on("/api/graph/relationships", HTTP_GET, [this]() { handleApiGraphRelationships(); });
-
-    m_server.on("/api/performance", HTTP_GET, [this]() { handleApiPerformance(); });
-
-    m_server.on("/api/diagnostics", HTTP_GET, [this]() { handleApiDiagnostics(); });
-
-    m_server.on("/api/crashes", HTTP_GET, [this]() { handleApiCrashes(); });
-    m_server.on("/api/crashes/ack", HTTP_POST, [this]() { handleApiCrashAck(); });
-    m_server.on("/api/crashes/clear", HTTP_POST, [this]() { handleApiCrashClear(); });
-
-    m_server.on("/api/summaries", HTTP_GET, [this]() { handleApiSummaries(); });
-    m_server.on("/api/summaries/today", HTTP_GET, [this]() { handleApiSummaryToday(); });
-    m_server.on("/api/summaries/delete", HTTP_POST, [this]() { handleApiSummaryDelete(); });
-
-    m_server.on("/api/memories/ranked", HTTP_GET, [this]() { handleApiMemoriesRanked(); });
-    m_server.on("/api/memories/search", HTTP_GET, [this]() { handleApiMemoriesSearch(); });
-    m_server.on("/api/memories/maintenance", HTTP_POST, [this]() { handleApiMemoriesMaintenance(); });
-
-    // V2.0 Feature API routes
-    m_server.on("/api/knowledge-graph", HTTP_GET, [this]() { handleApiKnowledgeGraph(); });
-    m_server.on("/api/knowledge-graph/node", HTTP_POST, [this]() { handleApiKnowledgeGraphNode(); });
-    m_server.on("/api/knowledge-graph/edge", HTTP_POST, [this]() { handleApiKnowledgeGraphEdge(); });
-    m_server.on("/api/knowledge-graph/traverse", HTTP_GET, [this]() { handleApiKnowledgeGraphTraverse(); });
-    m_server.on("/api/goals", HTTP_GET, [this]() { handleApiGoals(); });
-    m_server.on("/api/goals", HTTP_POST, [this]() { handleApiGoalCreate(); });
-    m_server.on("/api/goals/delete", HTTP_POST, [this]() { handleApiGoalDelete(); });
-    m_server.on("/api/goals/update", HTTP_POST, [this]() { handleApiGoalUpdate(); });
-    m_server.on("/api/habits", HTTP_GET, [this]() { handleApiHabits(); });
-    m_server.on("/api/habits", HTTP_POST, [this]() { handleApiHabitCreate(); });
-    m_server.on("/api/habits/delete", HTTP_POST, [this]() { handleApiHabitDelete(); });
-    m_server.on("/api/habits/toggle", HTTP_POST, [this]() { handleApiHabitToggle(); });
-    m_server.on("/api/planner", HTTP_GET, [this]() { handleApiPlanner(); });
-    m_server.on("/api/planner/task", HTTP_POST, [this]() { handleApiPlannerTask(); });
-    m_server.on("/api/planner/suggest", HTTP_GET, [this]() { handleApiPlannerSuggest(); });
-    m_server.on("/api/automations", HTTP_GET, [this]() { handleApiAutomations(); });
-    m_server.on("/api/automations", HTTP_POST, [this]() { handleApiAutomationCreate(); });
-    m_server.on("/api/automations/delete", HTTP_POST, [this]() { handleApiAutomationDelete(); });
-    m_server.on("/api/automations/toggle", HTTP_POST, [this]() { handleApiAutomationToggle(); });
-    m_server.on("/api/reflections", HTTP_GET, [this]() { handleApiReflections(); });
-    m_server.on("/api/reflections/run", HTTP_POST, [this]() { handleApiReflectionRun(); });
-    m_server.on("/api/functions", HTTP_GET, [this]() { handleApiFunctions(); });
-    m_server.on("/api/functions/execute", HTTP_POST, [this]() { handleApiFunctionExecute(); });
-
-    // Auth routes
-    m_server.on("/api/auth/login", HTTP_POST, [this]() { handleApiAuthLogin(); });
-    m_server.on("/api/auth/logout", HTTP_POST, [this]() { handleApiAuthLogout(); });
-    m_server.on("/api/auth/status", HTTP_GET, [this]() { handleApiAuthStatus(); });
-    m_server.on("/api/auth/change-password", HTTP_POST, [this]() { handleApiAuthChangePassword(); });
-
-    // Startup greeting routes
-    m_server.on("/api/startup/settings", HTTP_GET, [this]() { handleApiStartupSettings(); });
-    m_server.on("/api/startup/settings", HTTP_POST, [this]() { handleApiStartupSettings(); });
-
-    // Offline AI API
-    m_server.on("/api/offline_ai/status", HTTP_GET, [this]() { handleApiOfflineAIStatus(); });
-    m_server.on("/api/offline_ai/enable", HTTP_POST, [this]() { handleApiOfflineAIEnable(); });
-    m_server.on("/api/offline_ai/disable", HTTP_POST, [this]() { handleApiOfflineAIDisable(); });
-    m_server.on("/api/offline_ai/test", HTTP_POST, [this]() { handleApiOfflineAITest(); });
-
-    // V2.1 Intelligence Layer API routes
-    m_server.on("/api/decisions", HTTP_GET, [this]() { handleApiDecisions(); });
-    m_server.on("/api/decisions/make", HTTP_POST, [this]() { handleApiDecisionMake(); });
-    m_server.on("/api/decisions/explain", HTTP_GET, [this]() { handleApiDecisionExplain(); });
-    m_server.on("/api/decisions/rank", HTTP_GET, [this]() { handleApiDecisionRank(); });
-
-    m_server.on("/api/learning", HTTP_GET, [this]() { handleApiLearning(); });
-    m_server.on("/api/learning/observe", HTTP_POST, [this]() { handleApiLearningObserve(); });
-    m_server.on("/api/patterns", HTTP_GET, [this]() { handleApiPatterns(); });
-
-    m_server.on("/api/recommendations", HTTP_GET, [this]() { handleApiRecommendations(); });
-    m_server.on("/api/recommendations/dismiss", HTTP_POST, [this]() { handleApiRecommendDismiss(); });
-    m_server.on("/api/recommendations/act", HTTP_POST, [this]() { handleApiRecommendAct(); });
-    m_server.on("/api/recommendations/generate", HTTP_POST, [this]() { handleApiRecommendGenerate(); });
-
-    m_server.on("/api/predictions", HTTP_GET, [this]() { handleApiPredictions(); });
-    m_server.on("/api/predictions/run", HTTP_POST, [this]() { handleApiPredictionRun(); });
-
-    m_server.on("/api/documents", HTTP_GET, [this]() { handleApiDocuments(); });
-    m_server.on("/api/documents", HTTP_POST, [this]() { handleApiDocumentUpload(); });
-    m_server.on("/api/documents/delete", HTTP_POST, [this]() { handleApiDocumentDelete(); });
-    m_server.on("/api/documents/content", HTTP_GET, [this]() { handleApiDocumentContent(); });
-    m_server.on("/api/documents/search", HTTP_GET, [this]() { handleApiDocumentSearch(); });
-
-    m_server.on("/api/workspaces", HTTP_GET, [this]() { handleApiWorkspaces(); });
-    m_server.on("/api/workspaces", HTTP_POST, [this]() { handleApiWorkspaceCreate(); });
-    m_server.on("/api/workspaces/delete", HTTP_POST, [this]() { handleApiWorkspaceDelete(); });
-    m_server.on("/api/workspaces/activate", HTTP_POST, [this]() { handleApiWorkspaceActivate(); });
-    m_server.on("/api/workspaces/member", HTTP_POST, [this]() { handleApiWorkspaceMember(); });
-
-    m_server.on("/api/vault", HTTP_GET, [this]() { handleApiVault(); });
-    m_server.on("/api/vault", HTTP_POST, [this]() { handleApiVaultSet(); });
-    m_server.on("/api/vault/delete", HTTP_POST, [this]() { handleApiVaultDelete(); });
-    m_server.on("/api/vault/backup", HTTP_POST, [this]() { handleApiVaultBackup(); });
-
-    m_server.on("/api/developer", HTTP_GET, [this]() { handleApiDeveloper(); });
-    m_server.on("/api/developer/export", HTTP_GET, [this]() { handleApiDeveloperExport(); });
-
-    // V3.0 API routes
-    m_server.on("/api/dashboard/summary", HTTP_GET, [this]() { handleApiDashboardSummary(); });
-    m_server.on("/api/dashboard/recent", HTTP_GET, [this]() { handleApiDashboardRecent(); });
-    m_server.on("/api/memory/pin", HTTP_POST, [this]() { handleApiMemoryPin(); });
-    m_server.on("/api/memory/archive", HTTP_POST, [this]() { handleApiMemoryArchive(); });
-    m_server.on("/api/memory/pinned", HTTP_GET, [this]() { handleApiMemoryPinned(); });
-    m_server.on("/api/memory/archived", HTTP_GET, [this]() { handleApiMemoryArchived(); });
-    m_server.on("/api/memory/revisions", HTTP_GET, [this]() { handleApiMemoryRevisions(); });
-    m_server.on("/api/memory/restore", HTTP_POST, [this]() { handleApiMemoryRestore(); });
-    m_server.on("/api/memory/compare", HTTP_GET, [this]() { handleApiMemoryCompare(); });
-    m_server.on("/api/skills/studio/update", HTTP_POST, [this]() { handleApiSkillsStudioUpdate(); });
-    m_server.on("/api/skills/studio/duplicate", HTTP_POST, [this]() { handleApiSkillsStudioDuplicate(); });
-    m_server.on("/api/skills/studio/export", HTTP_GET, [this]() { handleApiSkillsStudioExport(); });
-    m_server.on("/api/skills/studio/import", HTTP_POST, [this]() { handleApiSkillsStudioImport(); });
-    m_server.on("/api/automation/nl/patterns", HTTP_GET, [this]() { handleApiAutomationNLPatterns(); });
-    m_server.on("/api/automation/nl/match", HTTP_POST, [this]() { handleApiAutomationNLMatch(); });
-    m_server.on("/api/study/subjects", HTTP_GET, [this]() { handleApiStudySubjects(); });
-    m_server.on("/api/study/subjects", HTTP_POST, [this]() { handleApiStudySubjects(); });
-    m_server.on("/api/study/sessions", HTTP_GET, [this]() { handleApiStudySessions(); });
-    m_server.on("/api/study/sessions", HTTP_POST, [this]() { handleApiStudySessions(); });
-    m_server.on("/api/study/flashcards", HTTP_GET, [this]() { handleApiStudyFlashcards(); });
-    m_server.on("/api/study/flashcards", HTTP_POST, [this]() { handleApiStudyFlashcards(); });
-    m_server.on("/api/study/stats", HTTP_GET, [this]() { handleApiStudyStats(); });
-    m_server.on("/api/companion/devices", HTTP_GET, [this]() { handleApiCompanionDevices(); });
-    m_server.on("/api/companion/devices", HTTP_POST, [this]() { handleApiCompanionDevices(); });
-    m_server.on("/api/companion/messages", HTTP_GET, [this]() { handleApiCompanionMessages(); });
-    m_server.on("/api/plugins/marketplace", HTTP_GET, [this]() { handleApiPluginsMarketplace(); });
-    m_server.on("/api/plugins/marketplace/register", HTTP_POST, [this]() { handleApiPluginsMarketplaceRegister(); });
-
-    // V3.1 Wake Word API routes
-    m_server.on("/api/wake-word/status", HTTP_GET, [this]() { handleApiWakeWordStatus(); });
-    m_server.on("/api/wake-word/settings", HTTP_GET, [this]() { handleApiWakeWordSettings(); });
-    m_server.on("/api/wake-word/settings", HTTP_POST, [this]() { handleApiWakeWordSettings(); });
-    m_server.on("/api/wake-word/phrases", HTTP_GET, [this]() { handleApiWakeWordPhrases(); });
-    m_server.on("/api/wake-word/phrases", HTTP_POST, [this]() { handleApiWakeWordAddPhrase(); });
-    m_server.on("/api/wake-word/phrases/remove", HTTP_POST, [this]() { handleApiWakeWordRemovePhrase(); });
-    m_server.on("/api/wake-word/stats/reset", HTTP_POST, [this]() { handleApiWakeWordResetStats(); });
-    m_server.on("/api/wake-word/calibrate", HTTP_POST, [this]() { handleApiWakeWordCalibrate(); });
-
-    // V3.1 ESP-NOW API routes
-    m_server.on("/api/espnow/status", HTTP_GET, [this]() { handleApiEspNowStatus(); });
-    m_server.on("/api/espnow/nodes", HTTP_GET, [this]() { handleApiEspNowNodes(); });
-    m_server.on("/api/espnow/pair", HTTP_POST, [this]() { handleApiEspNowPair(); });
-    m_server.on("/api/espnow/unpair", HTTP_POST, [this]() { handleApiEspNowUnpair(); });
-    m_server.on("/api/espnow/discovery", HTTP_POST, [this]() { handleApiEspNowDiscovery(); });
-
-    // Version API
-    m_server.on("/api/version", HTTP_GET, [this]() { handleApiVersion(); });
-
-    // V2 Companion Device Control API routes
-    m_server.on("/api/wifi/scan", HTTP_POST, [this]() { handleApiWifiScan(); });
-    m_server.on("/api/wifi/forget", HTTP_POST, [this]() { handleApiWifiForget(); });
-    m_server.on("/api/display/control", HTTP_GET, [this]() { handleApiDisplayControl(); });
-    m_server.on("/api/display/control", HTTP_POST, [this]() { handleApiDisplayControl(); });
-    m_server.on("/api/led/control", HTTP_GET, [this]() { handleApiLedControl(); });
-    m_server.on("/api/led/control", HTTP_POST, [this]() { handleApiLedControl(); });
-    m_server.on("/api/audio/control", HTTP_POST, [this]() { handleApiAudioControl(); });
-    m_server.on("/api/mic/control", HTTP_POST, [this]() { handleApiMicControl(); });
-    m_server.on("/api/mic/level", HTTP_GET, [this]() { handleApiMicLevel(); });
-
-    // SD diagnostics
-    m_server.on("/api/sd/diagnostics", HTTP_GET, [this]() { handleApiSdDiagnostics(); });
-
-    Logger::info("WebPortal", "API routes registered");
+    Logger::info("WebPortal", "API dispatcher registered (%u routes, heap %u B)",
+                 static_cast<unsigned>(kRouteCount), ESP.getFreeHeap());
     return true;
 }
 
@@ -807,7 +818,7 @@ void WebPortal::handleOTA() noexcept
                 if (!sig.isEmpty()) {
                     signatureOk = verifyWebOtaSignature(hash, sig);
                     if (!signatureOk) {
-                        Logger::error("WebPortal", "Web OTA signature INVALID — aborting");
+                        Logger::error("WebPortal", "Web OTA signature INVALID â€” aborting");
                         Update.abort();
                         m_otaInProgress = false;
                         securityManager.LogAudit(AuditEventType::OTA_STARTED, "webportal",
@@ -1490,6 +1501,55 @@ void WebPortal::handleApiCrashClear() noexcept
     if (!isAuthenticatedOrReject()) return;
     crashManager.clearCrashes();
     sendSuccess("All crash logs cleared");
+}
+
+// ============================================================================
+// Diagnostic Events (AURA_ERROR) API
+// ============================================================================
+
+void WebPortal::handleApiErrors() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+    String id = m_server.arg("id");
+    if (!id.isEmpty()) {
+        String ev = errorManager.getEventJsonById(id);
+        if (ev.isEmpty()) { sendError("Event not found", 404); return; }
+        sendJson("{\"event\":" + ev + "}");
+        return;
+    }
+    sendJson(errorManager.buildJson(false));
+}
+
+void WebPortal::handleApiErrorsActive() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+    sendJson(errorManager.buildJson(true));
+}
+
+void WebPortal::handleApiErrorsCount() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+    sendJson(errorManager.buildSummaryJson());
+}
+
+void WebPortal::handleApiErrorsAck() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+    String id = m_server.arg("id");
+    if (id.isEmpty()) { sendError("Missing event ID"); return; }
+    sendSuccess(errorManager.acknowledge(id) ? "Event acknowledged" : "Event not found");
+}
+
+void WebPortal::handleApiErrorsClear() noexcept
+{
+    m_requestCounter++;
+    if (!isAuthenticatedOrReject()) return;
+    errorManager.clearAll();
+    sendSuccess("All diagnostic events cleared");
 }
 
 // ============================================================================
@@ -2719,15 +2779,8 @@ bool WebPortal::loadAuthCredentials() noexcept {
         m_authMustChange = true;
         saveAuthCredentials(m_authUsername, m_authPassword);
 
-        Serial.println();
-        Serial.println("======================================================");
-        Serial.println("  AURA FIRST-BOOT ADMIN CREDENTIALS");
-        Serial.print("    Username: "); Serial.println(m_authUsername);
-        Serial.print("    Password: "); Serial.println(m_authPassword);
-        Serial.println("  Change it after first login (Web Portal > Settings).");
-        Serial.println("======================================================");
-        Serial.println();
-        Logger::warning("WebPortal", "Generated first-boot admin credentials (see Serial)");
+        // Production: never dump the first-boot password to the serial log.
+        Logger::warning("WebPortal", "First-boot admin credentials generated and stored in NVS");
         return true;
 #endif
     }
@@ -2750,9 +2803,13 @@ bool WebPortal::loadAuthCredentials() noexcept {
         m_authPassword = generateRandomPassword();
         m_authMustChange = true;
 #endif
-        saveAuthCredentials(m_authUsername, m_authPassword);
-        Logger::warning("WebPortal", "Regenerated empty admin password (see Serial)");
+                saveAuthCredentials(m_authUsername, m_authPassword);
+#if AURA_DEVELOPMENT_MODE
         Serial.print("AURA admin password: "); Serial.println(m_authPassword);
+#else
+        // Production: refresh the stored password without dumping it to serial.
+        Logger::warning("WebPortal", "Regenerated empty admin password (stored in NVS)");
+#endif
     }
 
     return true;
@@ -2850,7 +2907,7 @@ void WebPortal::handleApiAuthLogin() noexcept {
         return;
     }
 
-    // Successful login — reset per-IP rate limiter
+    // Successful login â€” reset per-IP rate limiter
     resetLoginTracker(clientIp);
 
     m_sessionToken = generateSessionToken();

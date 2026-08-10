@@ -40,6 +40,7 @@ AURA.pages.dashboard = function() {
     '<a href="#ota" class="act"><span class="material-symbols-outlined">system_update</span>OTA</a>' +
     '<a href="#settings" class="act"><span class="material-symbols-outlined">settings</span>Settings</a>' +
     '<a href="#logs" class="act"><span class="material-symbols-outlined">article</span>Logs</a>' +
+    '<a href="#errors" class="act"><span class="material-symbols-outlined">report</span>Errors</a>' +
     '<button class="act" onclick="AURA.restartDevice()"><span class="material-symbols-outlined">restart_alt</span>Restart</button>' +
     '<button class="act danger" onclick="AURA.factoryResetDevice()"><span class="material-symbols-outlined">dangerous</span>Factory Reset</button>' +
     '</div></div>' +

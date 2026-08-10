@@ -4,7 +4,43 @@ All notable changes to AURA OS are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 AURA OS is currently at version `1.0.0` (Mark III "Phoenix"), Development channel.
-Build metrics baseline: 61% flash (1,929,939 / 3,145,728 B) · 24% RAM (79,384 / 327,680 B) · 0 warnings.
+Current build metrics: 62% flash (1,979,307 / 3,145,728 B) · 33% RAM (108,384 / 327,680 B) · 0 warnings in AURA code.
+
+## [Unreleased] — Final LED Status System (solid-colour per state)
+
+Implements the final LED spec: every AURA state paints all 16 LEDs in a single
+distinct **solid colour** — no per-LED travel, chase, comet, tail, pulse,
+breathing or rotation. The only allowed variation is a subtle whole-ring
+synchronised brightness flicker.
+
+### Changed
+
+- **Normal status path rewritten to SOLID colours** (`led_ring.cpp`). All
+  `play*()` renderers now call a single `renderSolidStatus(color, lo%, hi%,
+  stepMax, minMs, maxMs)` helper; `update()` applies a short cross-fade between
+  solid states. Exact spec palette: IDLE/Boot blue `#0080FF`, Listening cyan
+  `#00FFFF`, Recording green `#00FF40`, Thinking/Processing yellow `#FFFF00`,
+  Speaking white `#FFFFFF`, Setup purple `#8000FF`, Privacy/Muted magenta
+  `#FF00AA`, Error red `#FF0000`, OTA orange `#FF8000`, plus distinct
+  non-status solids (honour gold, success mint, reminder amber, warning
+  red-orange, critical dark red, offline slate, sleep dim navy, wake azure,
+  Wi-Fi steel blue / spring green).
+- **Synchronised brightness flicker** — the entire ring shares ONE random-walk
+  brightness level (normal ~86–100 %, quiet ~92–100 %) recomputed every
+  50–150 ms; `ERROR`/`WARNING`/`CRITICAL` use a deeper, quicker flicker
+  (~55–100 %, 35–90 ms). Reset on every `setMood()`.
+- **Dead code removed** — old traversal constants (`kBootFillMs … kWifiStepMs`)
+  and per-state chasing renderers deleted.
+- **Gone** — travelling-light status animation, boot fill sweep, idle sparkle,
+  heartbeat/pulse variants, and sequential colour ramps in the status path.
+- **Unchanged** — Disco Mode (`renderDisco`, app-only, 10 rotating animations,
+  emergency pause) remains fully separate from the status system.
+
+### Docs
+
+- Docset updated to the solid-colour system: `AURA_Instruction_Manual.md`
+  (§8, status table, troubleshooting, FAQ), `AURA_QUICK_START.md`,
+  `docs/aura-led-state-machine.md`, and `aura_mood.h` header comments.
 
 ## [Unreleased] — Touch, Microphone & Setup Interact Refinement
 

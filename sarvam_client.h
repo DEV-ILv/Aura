@@ -201,6 +201,7 @@ private:
     enum class Kind : uint8_t { NONE, STT, TTS };
     Phase m_phase{Phase::IDLE};
     Kind m_kind{Kind::NONE};
+    bool m_finalized{false};  ///< Set whenever a terminal (success or failure) outcome is ready.
     uint8_t m_attempt{0};
     unsigned long m_backoffUntil{0};
     unsigned long m_startedAt{0};

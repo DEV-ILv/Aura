@@ -123,3 +123,20 @@ AURA.api.saveWifiForm = function(data) {
 AURA.api.saveSettingsForm = function(data) {
   return AURA.api.request('/settings', { method: 'POST', body: new URLSearchParams(data) });
 };
+
+// Diagnostic events (Error Center)
+AURA.api.getErrors = function() {
+  return AURA.api.fetchJSON('/api/errors');
+};
+AURA.api.getErrorsActive = function() {
+  return AURA.api.fetchJSON('/api/errors/active');
+};
+AURA.api.getErrorsCount = function() {
+  return AURA.api.fetchJSON('/api/errors/count');
+};
+AURA.api.ackError = function(id) {
+  return AURA.api.request('/api/errors/ack?id=' + encodeURIComponent(id), { method: 'POST' });
+};
+AURA.api.clearErrors = function() {
+  return AURA.api.request('/api/errors/clear', { method: 'POST' });
+};

@@ -34,73 +34,67 @@ void HandleVoiceEvent(const Event& e) {
 constexpr uint32_t kFrameIntervalMs = 20UL;
 constexpr uint8_t  kCrossFade = 140U;           // crisp, near-instant mood cross-fades (0..255)
 
-// ---- boot ----
-constexpr uint32_t kBootFillMs = 1600UL;        // time for the ring to fill
-constexpr uint32_t kBootStepMs = 40UL;
-
-// ---- idle ----
-constexpr uint32_t kIdleBreathPeriodMs = 6000UL;
-constexpr uint32_t kSparkleIntervalMinMs = 9000UL;
-constexpr uint32_t kSparkleIntervalMaxMs = 15000UL;
-constexpr uint32_t kSparkleStepMs = 18UL;
-constexpr uint8_t  kSparkleLen = 8;
-
 // ---- manual device-control session ---------------------------------------
 // A manual test session auto-expires so the ring can never be left glowing
 // forever after a user stops interacting with the device-control page.
 constexpr uint32_t kManualControlTimeoutMs = 60000UL;
-
-// ---- listening ----
-constexpr uint32_t kListenStepMs = 42UL;        // full lap ~ 16*42 = 672ms
-
-// ---- thinking / processing ----
-constexpr uint32_t kThinkFlowClock = 120UL;
-
-// ---- speaking ----
-constexpr uint32_t kSpeakClock = 22UL;
-
-// ---- reminder ----
-constexpr uint32_t kReminderStepMs = 55UL;
-
-// ---- warning ----
-constexpr uint32_t kWarningBeatMs = 1400UL;
-
-// ---- critical ----
-constexpr uint32_t kCriticalPeriodMs = 2200UL;
-
-// ---- ota ----
-constexpr uint32_t kOtaStepMs = 34UL;
-
-// ---- wifi ----
-constexpr uint32_t kWifiStepMs = 90UL;
 
 // ---- transients (these return to IDLE) ----
 constexpr uint32_t kSuccessDurationMs = 1700UL;
 constexpr uint32_t kWakeDurationMs = 1100UL;
 constexpr uint32_t kWifiConnectedDurationMs = 1300UL;
 
-// ---- palette (default, tinted by theme via moodColor) ----
-const CRGB kIdleColor(42, 84, 168);           // dim blue (passive idle)
-const CRGB kListeningColor(46, 216, 92);      // green (voice detected, VAD)
-const CRGB kRecordingColor(0, 208, 198);      // cyan (mic capture)
-const CRGB kThinkingColor(242, 212, 60);      // yellow (processing)
-const CRGB kProcessingColor(212, 232, 92);    // yellow-green processing
-const CRGB kSpeakingColor(238, 238, 242);     // white (speaking)
-const CRGB kHappyColor(255, 198, 108);       // warm gold
-const CRGB kSuccessColor(92, 224, 130);      // green
-const CRGB kReminderColor(245, 205, 84);     // golden yellow
-const CRGB kWarningColor(255, 150, 40);      // orange
-const CRGB kErrorColor(224, 58, 50);         // red
-const CRGB kPrivacyColor(216, 40, 44);       // solid red (privacy)
-const CRGB kCriticalColor(150, 26, 22);      // dark red
-const CRGB kOtaColor(164, 86, 230);          // purple
-const CRGB kOfflineColor(120, 132, 152);     // dim white
-const CRGB kSleepColor(150, 160, 182);       // white (rendered near-off)
-const CRGB kWakeColor(40, 110, 240);         // blue
-const CRGB kBootColor(206, 214, 236);        // clean white
-const CRGB kWifiConnectingColor(200, 212, 230);
-const CRGB kWifiConnectedColor(96, 214, 150);
-const CRGB kSetupColor(164, 86, 230);           // purple (setup/provisioning)
+// ---- normal status palette (FINAL SOLID-COLOUR SYSTEM) --------------------
+// The 16-LED ring is ONE indicator: every AURA state paints ALL 16 LEDs in a
+// single, distinct SOLID colour. There is NO per-LED movement, chase, comet,
+// tail, pulse, breathe, or rotation in the normal status path. Colours follow
+// the FINAL spec exactly and each status has its own recognisable hue.
+const CRGB kIdleColor(0x00, 0x80, 0xFF);          // Blue   #0080FF  IDLE/READY
+const CRGB kListeningColor(0x00, 0xFF, 0xFF);     // Cyan   #00FFFF  LISTENING
+const CRGB kRecordingColor(0x00, 0xFF, 0x40);     // Green  #00FF40  RECORDING
+const CRGB kThinkingColor(0xFF, 0xFF, 0x00);      // Yellow #FFFF00  THINKING
+const CRGB kProcessingColor(0xFF, 0xFF, 0x00);    // Yellow #FFFF00  PROCESSING
+const CRGB kSpeakingColor(0xFF, 0xFF, 0xFF);      // White  #FFFFFF  SPEAKING
+const CRGB kSetupColor(0x80, 0x00, 0xFF);         // Purple #8000FF  SETUP
+const CRGB kPrivacyColor(0xFF, 0x00, 0xAA);       // Magenta#FF00AA  PRIVACY/MUTED
+const CRGB kErrorColor(0xFF, 0x00, 0x00);         // Red    #FF0000  ERROR
+const CRGB kOtaColor(0xFF, 0x80, 0x00);           // Orange #FF8000  OTA
+
+// Non-status moods keep their own distinct SOLID colour so they never collide
+// with the status table, and are likewise rendered as an all-LED constant.
+const CRGB kIdlePastel(0x00, 0x80, 0xFF);         // reserved/blue idle variant
+const CRGB kBootColor(0x00, 0x80, 0xFF);          // Blue (boot sweep base)
+const CRGB kHappyColor(0xFF, 0xD7, 0x00);         // warm gold        HAPPY
+const CRGB kSuccessColor(0x00, 0xFF, 0xAA);       // mint green       SUCCESS
+const CRGB kReminderColor(0xFF, 0xAA, 0x00);      // amber            REMINDER
+const CRGB kWarningColor(0xFF, 0x40, 0x00);       // red-orange       WARNING
+const CRGB kCriticalColor(0x8A, 0x00, 0x00);      // dark red         CRITICAL
+const CRGB kOfflineColor(0x60, 0x70, 0x85);       // slate            OFFLINE
+const CRGB kSleepColor(0x40, 0x4A, 0x60);         // dim navy         SLEEP
+const CRGB kWakeColor(0x00, 0xAF, 0xFF);          // azure            WAKE
+const CRGB kWifiConnectingColor(0x40, 0x80, 0xE0);// steel blue       WIFI_CONNECTING
+const CRGB kWifiConnectedColor(0x00, 0xFF, 0x80); // spring green     WIFI_CONNECTED
+
+// ---- synchronised brightness flicker (status system only) ------------------
+// The entire ring shares ONE brightness level; individual LEDs NEVER change
+// independently. The level performs a small random walk (not a sine) so the
+// ring reads as a subtle electronic energy flicker rather than a flashing
+// warning or a breathing pulse.
+constexpr uint8_t kFlickerMacroIntervalMinMs = 50UL;  // typical recompute spacing
+constexpr uint8_t kFlickerMacroIntervalMaxMs = 150UL;
+constexpr uint8_t kFlickerNormalLoPercent  = 86U;   // ~85-100% for normal states
+constexpr uint8_t kFlickerNormalHiPercent  = 100U;
+constexpr uint8_t kFlickerSubtleLoPercent  = 92U;   // IDLE / PRIVACY / quiet states
+constexpr uint8_t kFlickerSubtleHiPercent  = 100U;
+constexpr uint8_t kFlickerErrorLoPercent   = 55U;   // ERROR: deeper, quicker flicker
+constexpr uint8_t kFlickerErrorHiPercent   = 100U;
+constexpr uint8_t kFlickerErrorIntervalMinMs = 35UL;
+constexpr uint8_t kFlickerErrorIntervalMaxMs = 90UL;
+constexpr uint8_t kFlickerErrorStepMax       = 12U;
+constexpr uint8_t kFlickerNormalStepMax      = 6;   // small random-walk step
+
+// Maximum per-frame brightness easing rate (0..255 level units).
+constexpr uint8_t kFlickerEaseStep = 10U;
 
 // ---- disco mode ----------------------------------------------------------
 // Smooth, LOW-resolution colour animations that intentionally avoid fast
@@ -134,6 +128,9 @@ LedRing::LedRing() noexcept
     , m_sparkleUntil(0U)
     , m_sparkleActive(false)
     , m_sparkleHead(0U)
+    , m_flickerLevel(255U)
+    , m_flickerTarget(255U)
+    , m_flickerNext(0U)
     , m_discoEnabled(false)
     , m_discoBrightness(100)
     , m_discoAnim(0U)
@@ -229,9 +226,12 @@ void LedRing::update() noexcept {
             return;
     }
 
-    // Soft cross-fade into the freshly computed frame for smooth transitions.
+    // A short cross-fade eases between two SOLID colours on state change.
+    // Every LED is still a constant colour; the blend only applies while a
+    // transition is in progress so there is no chasing or movement at all.
+    const uint8_t fade = kCrossFade;
     for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        m_leds[i] = blend(m_leds[i], m_frame[i], kCrossFade);
+        m_leds[i] = blend(m_leds[i], m_frame[i], fade);
     }
     FastLED.show();
 }
@@ -243,6 +243,11 @@ void LedRing::setMood(const AuraMood mood) noexcept {
     const bool changed = (mood != m_mood);
     m_mood = mood;
     m_moodSince = millis();
+    // Reset the shared flicker so a fresh SOLID colour starts near full
+    // brightness and its own random-walk path (no stale state from old mood).
+    m_flickerLevel = 255U;
+    m_flickerTarget = 255U;
+    m_flickerNext = 0U;
     if (changed) {
         Logger::info(kLogCategory, "Aura mood -> %s", auraMoodName(mood));
     }
@@ -483,380 +488,200 @@ void LedRing::renderDisco() noexcept {
 }
 
 // ============================================================================
-// Mood renderers
+// Normal SOLID status system (independent from Disco Mode)
+//
+// The 16-LED ring is ONE indicator. Each AuraMood fills ALL 16 LEDs with a
+// single distinct SOLID colour; there is NO per-LED movement, chase, comet,
+// tail, pulse, breathe, or rotation in this path. The only variation allowed
+// is a subtle, fully-synchronised brightness flicker over the whole ring.
 // ============================================================================
 
-void LedRing::playBoot() noexcept {
-    const unsigned long t = millis() - m_moodSince;
-    const CRGB col = moodColor(kBootColor);
-
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-
-    if (t < kBootFillMs) {
-        // A single LED appears, then the ring slowly fills.
-        const uint8_t head = static_cast<uint8_t>((t / kBootStepMs) % LED_COUNT);
-        const uint8_t filled = static_cast<uint8_t>(1 + (t * LED_COUNT) / kBootFillMs);
-        for (uint8_t i = 0; i < LED_COUNT; ++i) {
-            if (i < filled) {
-                const uint8_t dist = (i + LED_COUNT - head) % LED_COUNT;
-                const uint8_t amp = (dist < 4U)
-                    ? static_cast<uint8_t>(255U - dist * 60U)
-                    : 40U;
-                m_frame[i] = col;
-                m_frame[i].nscale8_video(amp);
-            }
-        }
-        return;
-    }
-
-    // Hold a calm breathing glow until the system advances to READY/IDLE.
-    const uint8_t br = beatsin8(static_cast<uint8_t>(60000UL / 2400UL), 40U, 180U);
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
+bool LedRing::isSequentialAnimation(const AuraMood mood) const noexcept {
+    // Retained as a marker only: the normal status path no longer performs any
+    // sequential/moving animation (all states are solid). Every mood reports
+    // false so the caller always uses the shared solid cross-fade.
+    (void)mood;
+    return false;
 }
 
-void LedRing::playIdle() noexcept {
-    const CRGB col = moodColor(kIdleColor);
+void LedRing::renderSolidStatus(const CRGB color, const uint8_t loPercent,
+                                const uint8_t hiPercent, const uint8_t stepMax,
+                                const uint8_t intervalMinMs,
+                                const uint8_t intervalMaxMs) noexcept {
     const unsigned long now = millis();
 
-    // Very slow breathing, 5-7s.
-    const uint8_t br = beatsin8(
-        static_cast<uint8_t>(60000UL / kIdleBreathPeriodMs), 55U, 170U);
-
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
-
-    // Occasional tiny travelling sparkle (only one LED), very subtle.
-    if (now >= m_sparkleNext) {
-        m_sparkleNext = now + kSparkleIntervalMinMs
-            + (random16() % (kSparkleIntervalMaxMs - kSparkleIntervalMinMs));
-        m_sparkleActive = true;
-        m_sparkleHead = 0;
-        m_sparkleUntil = now + kSparkleLen * kSparkleStepMs;
-    }
-    if (m_sparkleActive) {
-        if (now >= m_sparkleUntil) {
-            m_sparkleActive = false;
-        } else {
-            const uint8_t head = static_cast<uint8_t>(
-                ((now - (m_sparkleUntil - kSparkleLen * kSparkleStepMs)) / kSparkleStepMs) % LED_COUNT);
-            for (uint8_t i = 0; i < LED_COUNT; ++i) {
-                const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-                if (d < kSparkleLen) {
-                    const uint8_t a = static_cast<uint8_t>(kSparkleLen - d);
-                    m_frame[i] = col;
-                    m_frame[i].nscale8_video(static_cast<uint8_t>(a * 12U));
-                }
-            }
+    // Pick a new random-walk target on a slow cadence. The walk stays inside
+    // [loPercent, hiPercent] and never jumps by more than `stepMax` points so
+    // the ring shimmers like subtle energy instead of flashing.
+    if (m_flickerNext == 0UL || now >= m_flickerNext) {
+        if (m_flickerNext != 0UL) {
+            const uint8_t lo = static_cast<uint8_t>((static_cast<uint16_t>(loPercent) * 255U) / 100U);
+            const uint8_t hi = static_cast<uint8_t>((static_cast<uint16_t>(hiPercent) * 255U) / 100U);
+            int16_t target = static_cast<int16_t>(m_flickerTarget)
+                + static_cast<int16_t>(random8(stepMax * 2U + 1U)) - static_cast<int16_t>(stepMax);
+            if (target < static_cast<int16_t>(lo)) target = static_cast<int16_t>(lo);
+            if (target > static_cast<int16_t>(hi)) target = static_cast<int16_t>(hi);
+            m_flickerTarget = static_cast<uint8_t>(target);
         }
+        m_flickerNext = now + intervalMinMs
+            + static_cast<unsigned long>(random16(intervalMaxMs - intervalMinMs + 1UL));
     }
+
+    // Ease the shared level toward the target so the whole ring changes
+    // together, in tiny synchronized steps (never per-LED).
+    if (m_flickerLevel < m_flickerTarget) {
+        const uint8_t next = static_cast<uint8_t>(static_cast<uint16_t>(m_flickerLevel) + kFlickerEaseStep);
+        m_flickerLevel = (next > m_flickerTarget) ? m_flickerTarget : next;
+    } else if (m_flickerLevel > m_flickerTarget) {
+        const uint8_t next = static_cast<uint8_t>(static_cast<uint16_t>(m_flickerLevel) - kFlickerEaseStep);
+        m_flickerLevel = (next < m_flickerTarget) ? m_flickerTarget : next;
+    }
+
+    CRGB solid = color;
+    solid.nscale8_video(m_flickerLevel);
+    fill_solid(m_frame, LED_COUNT, solid);
+}
+
+// ---- status moods (SOLID, exact spec colours) -----------------------------
+
+void LedRing::playIdle() noexcept {
+    // ALL 16 LEDs: SOLID BLUE (very subtle, slow flicker).
+    renderSolidStatus(kIdleColor, kFlickerSubtleLoPercent, kFlickerSubtleHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playListening() noexcept {
-    const CRGB col = moodColor(kListeningColor);
-    const uint8_t voice = m_voiceLevel;
-    const uint8_t head = static_cast<uint8_t>((millis() / kListenStepMs) % LED_COUNT);
-
-    fill_solid(m_frame, LED_COUNT, col);
-
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-        uint8_t amp;
-        if (d == 0) {
-            amp = 210U + scale8(voice, 45U);
-        } else if (d < 6U) {
-            amp = static_cast<uint8_t>(150U - d * 22U + scale8(voice, 30U));
-        } else {
-            amp = static_cast<uint8_t>(46U + scale8(voice, 70U));  // VU floor follows voice
-        }
-        m_frame[i].nscale8_video(amp);
-    }
+    // ALL 16 LEDs: SOLID CYAN.
+    renderSolidStatus(kListeningColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playRecording() noexcept {
-    const CRGB col = moodColor(kRecordingColor);
-
-    // Smooth breathing cyan — mic capture in progress.
-    const uint8_t br = beatsin8(static_cast<uint8_t>(60000UL / 1600UL), 70U, 235U);
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
-}
-
-void LedRing::playPrivacy() noexcept {
-    const CRGB col = moodColor(kPrivacyColor);
-
-    // Solid red, no motion — microphone muted.
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(255U);
-}
-
-void LedRing::playSetup() noexcept {
-    const CRGB col = moodColor(kSetupColor);
-    const unsigned long t = millis() - m_moodSince;
-
-    // Purple breathing with a slow rotating highlight — provisioning mode.
-    const uint8_t br = beatsin8(static_cast<uint8_t>(60000UL / 2200UL), 55U, 150U);
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
-
-    const uint8_t head = static_cast<uint8_t>((t / 260UL) % LED_COUNT);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-        if (d < 6U) {
-            m_frame[i].nscale8_video(static_cast<uint8_t>(210U - d * 40U));
-        }
-    }
+    // ALL 16 LEDs: SOLID GREEN.
+    renderSolidStatus(kRecordingColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playThinking() noexcept {
-    const CRGB col = moodColor(kThinkingColor);
-    const unsigned long t = millis() - m_moodSince;
-
-    // Fast rotating yellow "thinking" spinner (~450 ms lap).
-    const uint8_t head = static_cast<uint8_t>((t / 28UL) % LED_COUNT);
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-        if (d < 5U) {
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(static_cast<uint8_t>(255U - d * 45U));
-        }
-    }
+    // ALL 16 LEDs: SOLID YELLOW.
+    renderSolidStatus(kThinkingColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playProcessing() noexcept {
-    const CRGB col = moodColor(kProcessingColor);
-    const unsigned long t = millis() - m_moodSince;
-
-    // Even faster rotating yellow-green spinner with a faint ring glow.
-    const uint8_t head = static_cast<uint8_t>((t / 20UL) % LED_COUNT);
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-    const uint8_t glow = beatsin8(static_cast<uint8_t>(60000UL / 900UL), 40U, 120U);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-        if (d < 7U) {
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(static_cast<uint8_t>(255U - d * 30U));
-        } else {
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(glow);
-        }
-    }
+    // ALL 16 LEDs: SOLID YELLOW.
+    renderSolidStatus(kProcessingColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playSpeaking() noexcept {
-    const CRGB col = moodColor(kSpeakingColor);
-    const unsigned long t = millis() - m_moodSince;
-    const uint8_t voice = m_voiceLevel;
+    // ALL 16 LEDs: SOLID WHITE.
+    renderSolidStatus(kSpeakingColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
+}
 
-    // Audio-reactive white: the ring brightness follows the (speaker) voice
-    // level, layered with a fast speech pulse so it reads as "talking".
-    const uint8_t beat = beatsin8(static_cast<uint8_t>(60000UL / 110UL), 55U, 255U);
-    const uint8_t base = static_cast<uint8_t>(80U + scale8(voice, 140U));
+void LedRing::playSetup() noexcept {
+    // ALL 16 LEDs: SOLID PURPLE.
+    renderSolidStatus(kSetupColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
+}
 
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        // Expanding speech waves add motion at the mic level.
-        const uint8_t w = sin8(static_cast<uint8_t>((t / kSpeakClock) + i * 32U));
-        uint16_t e = static_cast<uint16_t>(scale8(beat, base)) + scale8(w, 70U);
-        if (e > 255U) e = 255U;
-        m_frame[i] = col;
-        m_frame[i].nscale8_video(static_cast<uint8_t>(e));
-    }
+void LedRing::playPrivacy() noexcept {
+    // ALL 16 LEDs: SOLID MAGENTA (very subtle).
+    renderSolidStatus(kPrivacyColor, kFlickerSubtleLoPercent, kFlickerSubtleHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
+}
+
+void LedRing::playError() noexcept {
+    // ALL 16 LEDs: SOLID RED with a slightly deeper, faster flicker so errors
+    // are noticed, while the whole ring still stays perfectly in sync.
+    renderSolidStatus(kErrorColor, kFlickerErrorLoPercent, kFlickerErrorHiPercent,
+                      kFlickerErrorStepMax, kFlickerErrorIntervalMinMs, kFlickerErrorIntervalMaxMs);
+}
+
+void LedRing::playOta() noexcept {
+    // ALL 16 LEDs: SOLID ORANGE.
+    renderSolidStatus(kOtaColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
+}
+
+// ---- non-status moods (also SOLID, kept distinct from the status table) ---
+
+void LedRing::playBoot() noexcept {
+    // SOLID blue during the boot window (matches the IDLE identity).
+    renderSolidStatus(kBootColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playHappy() noexcept {
-    const CRGB col = moodColor(kHappyColor);
-    const unsigned long t = millis();
-
-    // Warm gold, soft expanding pulse.
-    const uint8_t br = beatsin8(static_cast<uint8_t>(60000UL / 2200UL), 70U, 230U);
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
-
-    // Expanding ripple — brightness grows then decays around two heads.
-    const uint8_t h = static_cast<uint8_t>((t / 70U) % LED_COUNT);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - h) % LED_COUNT;
-        if (d < 6U) {
-            m_frame[i].nscale8_video(static_cast<uint8_t>(scale8(220U - d * 30U, 200U)));
-        }
-    }
+    renderSolidStatus(kHappyColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playSuccess() noexcept {
     const unsigned long t = millis() - m_moodSince;
     if (t >= kSuccessDurationMs) {
-        // Event finished: return the ring to its automatic idle state (OFF).
         setMood(AuraMood::IDLE);
         fill_solid(m_frame, LED_COUNT, CRGB::Black);
         clearRing();
         return;
     }
-
-    const CRGB col = moodColor(kSuccessColor);
-    // A green wave expands around the ring then returns.
-    const uint8_t head = static_cast<uint8_t>((t / 35U) % LED_COUNT);
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-        if (d < 12U) {
-            const uint8_t a = static_cast<uint8_t>((12U - d) * 20U);
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(a);
-        }
-    }
+    renderSolidStatus(kSuccessColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playReminder() noexcept {
-    const CRGB col = moodColor(kReminderColor);
-    const unsigned long t = millis() - m_moodSince;
-
-    // Golden-yellow circular ripple, repeating slowly.
-    const uint8_t pos = static_cast<uint8_t>((t / kReminderStepMs) % LED_COUNT);
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - pos) % LED_COUNT;
-        if (d < 6U) {
-            const uint8_t a = static_cast<uint8_t>(scale8(255U - d * 38U, 210U) * (d == 0U ? 255U : 120U) / 255U);
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(a);
-        } else if (d >= 8U && d < 12U) {
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(30U);
-        }
-    }
+    renderSolidStatus(kReminderColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playWarning() noexcept {
-    const CRGB col = moodColor(kWarningColor);
-    const uint32_t tt = millis() % kWarningBeatMs;
-
-    // Orange heartbeat — two soft thumps per beat, no flashing.
-    uint8_t e = 0;
-    if (tt < 240U) {
-        e = static_cast<uint8_t>(255U - (tt * 255U / 240U));
-    } else if (tt > (kWarningBeatMs - 400U)) {
-        const uint32_t k = tt - (kWarningBeatMs - 400U);
-        e = static_cast<uint8_t>(200U - (k * 200U / 400U));
-    }
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(e);
-}
-
-void LedRing::playError() noexcept {
-    const CRGB col = moodColor(kErrorColor);
-    // Fast red flashing, 5 Hz (~200 ms period).
-    const bool on = (millis() % 200UL) < 100UL;
-    const uint8_t amp = on ? 255U : 14U;
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(amp);
+    renderSolidStatus(kWarningColor, kFlickerErrorLoPercent, kFlickerErrorHiPercent,
+                      kFlickerErrorStepMax, kFlickerErrorIntervalMinMs, kFlickerErrorIntervalMaxMs);
 }
 
 void LedRing::playCritical() noexcept {
-    const CRGB col = moodColor(kCriticalColor);
-    // Dark red, very slow pulse (<= 2 Hz).
-    const uint8_t br = beatsin8(static_cast<uint8_t>(60000UL / kCriticalPeriodMs), 40U, 130U);
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
-}
-
-void LedRing::playOta() noexcept {
-    const CRGB col = moodColor(kOtaColor);
-    const unsigned long t = millis() - m_moodSince;
-
-    const uint8_t arc = static_cast<uint8_t>(
-        (static_cast<uint16_t>(m_otaProgress) * LED_COUNT) / 100U);
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-
-    // Purple energy rotates; the arc length tracks progress.
-    const uint8_t head = static_cast<uint8_t>((t / kOtaStepMs) % LED_COUNT);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-        if (d < arc) {
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(d == 0U ? 255U : 150U);
-        }
-    }
-    if (arc < LED_COUNT) {
-        // A bright pulse leads the arc's end.
-        const uint8_t lead = static_cast<uint8_t>((head + LED_COUNT + arc) % LED_COUNT);
-        m_frame[lead] = col;
-        m_frame[lead].nscale8_video(beatsin8(80U, 120U, 255U));
-    }
+    renderSolidStatus(kCriticalColor, kFlickerErrorLoPercent, kFlickerErrorHiPercent,
+                      kFlickerErrorStepMax, kFlickerErrorIntervalMinMs, kFlickerErrorIntervalMaxMs);
 }
 
 void LedRing::playOffline() noexcept {
-    const CRGB col = moodColor(kOfflineColor);
-    // Dim white with a tiny heartbeat — alive, not broken.
-    const uint8_t br = beatsin8(static_cast<uint8_t>(60000UL / 2600UL), 30U, 110U);
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
+    renderSolidStatus(kOfflineColor, kFlickerSubtleLoPercent, kFlickerSubtleHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playSleep() noexcept {
-    const CRGB col = moodColor(kSleepColor);
-    // Near-off: a faint heartbeat every ~10s.
-    const uint32_t tt = millis() % 10000UL;
-    uint8_t e = 0;
-    if (tt < 500UL) {
-        const uint8_t k = static_cast<uint8_t>(255U - (tt * 255U / 500UL));
-        e = static_cast<uint8_t>(scale8(k, 90U));
-    }
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(e);
+    renderSolidStatus(kSleepColor, kFlickerSubtleLoPercent, kFlickerSubtleHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playWake() noexcept {
     const unsigned long t = millis() - m_moodSince;
     if (t >= kWakeDurationMs) {
-        // Event finished: return the ring to its automatic idle state (OFF).
         setMood(AuraMood::IDLE);
         fill_solid(m_frame, LED_COUNT, CRGB::Black);
         clearRing();
         return;
     }
-
-    const CRGB col = moodColor(kWakeColor);
-    // Small expanding blue pulse from a single origin.
-    const uint8_t rad = static_cast<uint8_t>((t / 55UL) % LED_COUNT);
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - rad) % LED_COUNT;
-        if (d < 6U) {
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(static_cast<uint8_t>(scale8(255U - d * 40U, 230U)));
-        }
-    }
+    renderSolidStatus(kWakeColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playWifiConnecting() noexcept {
-    const CRGB col = moodColor(kWifiConnectingColor);
-    // Soft white segment sweeping, pulsing gently.
-    const uint8_t head = static_cast<uint8_t>((millis() / kWifiStepMs) % LED_COUNT);
-    fill_solid(m_frame, LED_COUNT, CRGB::Black);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) {
-        const uint8_t d = (i + LED_COUNT - head) % LED_COUNT;
-        if (d < 5U) {
-            m_frame[i] = col;
-            m_frame[i].nscale8_video(static_cast<uint8_t>(140U - d * 24U));
-        }
-    }
+    renderSolidStatus(kWifiConnectingColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 void LedRing::playWifiConnected() noexcept {
     const unsigned long t = millis() - m_moodSince;
     if (t >= kWifiConnectedDurationMs) {
-        // Brief status animation finished: back to automatic idle (OFF).
         setMood(AuraMood::IDLE);
         fill_solid(m_frame, LED_COUNT, CRGB::Black);
         clearRing();
         return;
     }
-
-    const CRGB col = moodColor(kWifiConnectedColor);
-    const uint8_t br = beatsin8(120U, 120U, 255U);
-    fill_solid(m_frame, LED_COUNT, col);
-    for (uint8_t i = 0; i < LED_COUNT; ++i) m_frame[i].nscale8_video(br);
+    renderSolidStatus(kWifiConnectedColor, kFlickerNormalLoPercent, kFlickerNormalHiPercent,
+                      kFlickerNormalStepMax, kFlickerMacroIntervalMinMs, kFlickerMacroIntervalMaxMs);
 }
 
 // ============================================================================

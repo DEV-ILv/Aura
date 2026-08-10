@@ -429,6 +429,7 @@ private:
     void renderSleep() noexcept;
     void renderStartupGreeting() noexcept;
     void renderFace() noexcept;
+    void renderIdleClock() noexcept;
 
     // Private helper methods
     void drawCenteredText(const String& text, uint8_t y, uint8_t textSize = 1) noexcept;
@@ -614,7 +615,12 @@ private:
     // AURA presence face + on-demand dashboard timer
     AuraFace m_face;                         ///< JARVIS-style face renderer
     unsigned long m_dashboardUntil;        ///< Timestamp when dashboard returns to face
+    bool m_messageActive = false;        ///< HOME shows a message screen instead of dashboard
     bool m_statusPinned = false;         ///< Hold status screen against auto-return
+
+    // Idle clock (displayed only while truly idle on the presence face)
+    uint8_t m_clockMinute;   ///< Last rendered IST minute (0..59) for change detection
+    char m_clockText[6];     ///< Cached "HH:MM" (NUL-terminated) clock text
 
     // Display configuration constants
     static constexpr uint16_t m_displayWidth{OLED_WIDTH};           ///< Display width in pixels

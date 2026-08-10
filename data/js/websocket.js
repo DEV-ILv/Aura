@@ -50,6 +50,8 @@ AURA.ws.connect = function() {
             AURA.ws.authed = true; // avoid recursion via handleExpired->close
             AURA.session.handleExpired();
           }
+        } else if (data.type === 'aura_error') {
+          if (AURA.ws.onError) AURA.ws.onError(data.event || {});
         } else {
           AURA.ws.dispatch(data);
         }
@@ -75,6 +77,17 @@ AURA.ws.connect = function() {
 AURA.ws.dispatch = function(data) {
   if (data.type === 'status' && AURA.onStatus) {
     AURA.onStatus(data);
+  }
+};
+
+// Firmware pushes this when a new ERROR/CRITICAL diagnostic event fires.
+AURA.ws.onError = function(event) {
+  var sev = String(event.severity || 'ERROR');
+  var label = event.title || event.code || event.id || 'Error';
+  var kind = sev === 'CRITICAL' || sev === 'ERROR' ? 'error' : 'info';
+  AURA.components.toast(sev + ': ' + label, kind);
+  if (location.hash === '#errors' && AURA.errors) {
+    AURA.errors.load();
   }
 };
 

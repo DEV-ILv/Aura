@@ -55,9 +55,16 @@ void StartupGreetingManager::update() noexcept {
         }
     }
 
-    if (m_phase == GreetingPhase::SPEAKING) {
-        if (!textToSpeech.isBusy()) {
-m_phase = GreetingPhase::COMPLETED;
+if (m_phase == GreetingPhase::SPEAKING) {
+        // TTS queues quickly here but can stall indefinitely on a broken stack
+        // (missing root CA, no WiFi, provider outage). A hard timeout guarantees
+        // the greeting always returns to the presence + clock, no matter what.
+        if (!textToSpeech.isBusy() || (now - m_startTime) >= kSpeakTimeoutMs) {
+            if (textToSpeech.isBusy()) {
+                LOG_WARN(kLogCategory, "Speak timed out (%lu ms); skipping audio", kSpeakTimeoutMs);
+                textToSpeech.stop();
+            }
+            m_phase = GreetingPhase::COMPLETED;
             m_active = false;
             displayManager.showHome();
             auraSystem.enterIdle();
@@ -67,7 +74,15 @@ m_phase = GreetingPhase::COMPLETED;
 }
 
 void StartupGreetingManager::start() noexcept {
-    if (!m_initialized || !m_settings.enabled || m_active) return;
+    if (!m_initialized || m_active) return;
+
+    // Disabled greeting must not strand the OLED on the boot screen: the
+    // device goes straight to the presence face + clock (idle) instead.
+    if (!m_settings.enabled) {
+        displayManager.showHome();
+        auraSystem.enterIdle();
+        return;
+    }
 
     m_active = true;
     m_phase = GreetingPhase::DISPLAYING;

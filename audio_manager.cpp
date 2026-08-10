@@ -64,7 +64,7 @@ AudioManager::AudioManager() noexcept
       m_noiseFloor(50),
       m_noiseThreshold(WAKE_WORD_NOISE_THRESHOLD_DEFAULT),
       m_voiceActive(false),
-      m_vadMonitoring(true),
+      m_vadMonitoring(false),
       m_voiceDebounce(0),
       m_lastVadSampleTime(0),
       m_queueProcessing(false)

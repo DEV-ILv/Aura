@@ -1,6 +1,7 @@
 #include "wifi_manager.h"
 #include "config.h"
 #include "logger.h"
+#include "error_manager.h"
 #include <ESPmDNS.h>
 #include <inttypes.h>
 
@@ -572,6 +573,9 @@ void WifiManager::handleConnection() noexcept {
       Logger::error("WifiManager", "Max attempts reached");
       changeState(WifiState::ERROR);
       m_connectionAttempts = 0;
+      errorManager.report(AuraErrorSeverity::ERROR, "WiFi", "WIFI_CONN_TIMEOUT",
+                          "WiFi connection timed out",
+                          "Repeated attempts to join the saved network failed");
     }
     return;
   }
@@ -583,6 +587,10 @@ void WifiManager::handleConnection() noexcept {
     m_connecting = false;
     m_connectionAttempts = 0;
     m_lastRSSI = WiFi.RSSI();
+    errorManager.resolve("WiFi", "WIFI_CONN_TIMEOUT");
+    errorManager.resolve("WiFi", "WIFI_CONN_FAILED");
+    errorManager.resolve("WiFi", "WIFI_NO_SSID");
+    errorManager.resolve("WiFi", "WIFI_LINK_LOST");
     
     // Attempt NTP sync
     syncTime();
@@ -619,6 +627,10 @@ void WifiManager::handleEvents() noexcept {
                 changeState(WifiState::CONNECTED);
                 m_connectionAttempts = 0;
                 m_lastRSSI = WiFi.RSSI();
+                errorManager.resolve("WiFi", "WIFI_CONN_TIMEOUT");
+                errorManager.resolve("WiFi", "WIFI_CONN_FAILED");
+                errorManager.resolve("WiFi", "WIFI_NO_SSID");
+                errorManager.resolve("WiFi", "WIFI_LINK_LOST");
             }
             break;
 
@@ -627,17 +639,26 @@ void WifiManager::handleEvents() noexcept {
                 Logger::warning("WifiManager", "WiFi connection lost");
                 changeState(WifiState::DISCONNECTED);
                 m_reconnectTimer = millis();
+                errorManager.report(AuraErrorSeverity::WARNING, "WiFi", "WIFI_LINK_LOST",
+                                    "WiFi connection lost",
+                                    "The link dropped; the device will attempt to reconnect");
             }
             break;
 
         case WL_CONNECT_FAILED:
             Logger::error("WifiManager", "WiFi connection failed");
             changeState(WifiState::ERROR);
+            errorManager.report(AuraErrorSeverity::ERROR, "WiFi", "WIFI_CONN_FAILED",
+                                "WiFi connection failed",
+                                "The network rejected the connection attempt");
             break;
 
         case WL_NO_SSID_AVAIL:
             Logger::warning("WifiManager", "WiFi SSID not available");
             changeState(WifiState::ERROR);
+            errorManager.report(AuraErrorSeverity::WARNING, "WiFi", "WIFI_NO_SSID",
+                                "WiFi network unavailable",
+                                "The saved network SSID is not in range");
             break;
 
         default:
@@ -658,6 +679,10 @@ void WifiManager::checkConnection() noexcept {
   if (status == WL_CONNECTED) {
     if (m_currentState != WifiState::CONNECTED) {
       changeState(WifiState::CONNECTED);
+      errorManager.resolve("WiFi", "WIFI_CONN_TIMEOUT");
+      errorManager.resolve("WiFi", "WIFI_CONN_FAILED");
+      errorManager.resolve("WiFi", "WIFI_NO_SSID");
+      errorManager.resolve("WiFi", "WIFI_LINK_LOST");
     }
     // Update RSSI for connected state
     m_lastRSSI = WiFi.RSSI();
@@ -668,6 +693,9 @@ void WifiManager::checkConnection() noexcept {
       m_connectionAttempts = 0;
       m_reconnectTimer = millis();
       m_timeSynced = false;
+      errorManager.report(AuraErrorSeverity::WARNING, "WiFi", "WIFI_LINK_LOST",
+                          "WiFi connection lost",
+                          "The link dropped; the device will attempt to reconnect");
     }
   }
 }

@@ -30,6 +30,38 @@ static String escapeJson(const String& raw) noexcept {
     return escaped;
 }
  
+/// Extract a quoted string value by key from a small JSON object fragment.
+static inline String json_helpers_extractString(const String& obj, const char* key) noexcept {
+    String search = String("\"") + key + "\":\"";
+    int s = obj.indexOf(search);
+    if (s >= 0) {
+        s += search.length();
+        int e = obj.indexOf('"', s);
+        if (e >= 0) return obj.substring(s, e);
+    }
+    return "";
+}
+
+/// Extract a raw (non-string) scalar value by key from a JSON object fragment.
+/// Returns empty when the key is absent. The value ends at the next ',' or '}'.
+static inline String json_helpers_extractRaw(const String& obj, const char* key) noexcept {
+    String search = String("\"") + key + "\":";
+    int s = obj.indexOf(search);
+    if (s >= 0) {
+        s += search.length();
+        int e = s;
+        while (e < (int)obj.length() && obj[e] != ',' && obj[e] != '}') e++;
+        return obj.substring(s, e);
+    }
+    return "";
+}
+
+/// Extract a boolean value by key from a JSON object fragment (default false).
+static inline bool json_helpers_extractBool(const String& obj, const char* key) noexcept {
+    String val = json_helpers_extractRaw(obj, key);
+    return (val == "true" || val == "1");
+}
+
 /// Generate a unique hex identifier using millis, monotonic counter, and MAC.
 static inline String generateId() noexcept {
     static unsigned long s_counter = 0;

@@ -394,6 +394,15 @@ enum LogLevel
 #define DIAG_MAX_COMPONENTS      16
 
 //======================================================
+// ERROR REPORTER (structured diagnostic events)
+//======================================================
+
+#define ERROR_LOG_MAX            200
+#define ERROR_EVENT_PATH         "/aura_errors.json"
+#define ERROR_REPORT_THROTTLE_MS 30000UL
+#define ERROR_WS_PUSH_SEVERITY   2   // push WS on new events >= this level (2=ERROR, 3=CRITICAL)
+
+//======================================================
 // SAFE MODE
 //======================================================
 

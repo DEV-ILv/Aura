@@ -370,6 +370,11 @@ private:
     void handleApiCrashes() noexcept;
     void handleApiCrashAck() noexcept;
     void handleApiCrashClear() noexcept;
+    void handleApiErrors() noexcept;
+    void handleApiErrorsActive() noexcept;
+    void handleApiErrorsCount() noexcept;
+    void handleApiErrorsAck() noexcept;
+    void handleApiErrorsClear() noexcept;
     void handleApiSummaries() noexcept;
     void handleApiSummaryToday() noexcept;
     void handleApiSummaryDelete() noexcept;

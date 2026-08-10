@@ -3,6 +3,7 @@
 #include <base64.h>
 #include <cstring>
 #include <esp_task_wdt.h>
+#include "error_manager.h"
 
 /// Global OtaManager instance
 OtaManager otaManager;
@@ -409,6 +410,20 @@ void OtaManager::setError(OTAError error) noexcept {
     m_lastError = error;
     m_info.updateAvailable = false;
     Logger::error(kLogCategory, "Error: %d", static_cast<int>(error));
+
+    const char* code = "OTA_UNKNOWN";
+    const char* title = "OTA update failed";
+    switch (error) {
+        case OTAError::NO_WIFI:        code = "OTA_NO_WIFI"; title = "OTA: no WiFi connection"; break;
+        case OTAError::NETWORK:        code = "OTA_NETWORK"; title = "OTA: update server unreachable"; break;
+        case OTAError::DOWNLOAD:       code = "OTA_DOWNLOAD"; title = "OTA: firmware download failed"; break;
+        case OTAError::VERIFY:         code = "OTA_VERIFY"; title = "OTA: firmware verification failed"; break;
+        case OTAError::INSTALL:        code = "OTA_INSTALL"; title = "OTA: firmware install failed"; break;
+        case OTAError::AUTHENTICATION: code = "OTA_AUTH"; title = "OTA: update server authentication failed"; break;
+        case OTAError::UNKNOWN:        code = "OTA_UNKNOWN"; title = "OTA: unknown error"; break;
+        default:                       code = "OTA_UNKNOWN"; break;
+    }
+    errorManager.report(AuraErrorSeverity::ERROR, "OTA", code, title, "");
 }
 
 bool OtaManager::connectServer() noexcept {

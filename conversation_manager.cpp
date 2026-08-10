@@ -15,6 +15,7 @@
 #include "study_manager.h"
 #include "assistant_output.h"
 #include "wifi_manager.h"
+#include "error_manager.h"
 
 ConversationManager conversationManager;
 
@@ -90,9 +91,10 @@ bool ConversationManager::initialize() noexcept {
     if (m_initialized) return true;
 
     if (!speechToText.isInitialized()) {
-        LOG_ERROR("ConversationManager", "SpeechToText not initialized");
-        setError(ConversationError::STT_ERROR);
-        return false;
+        // Degraded mode: without STT the conversation engine still provides the
+        // touch-controlled mic (single/double tap, 5s setup hold) and status
+        // feedback. Voice-to-text only requires a re-initialized STT provider.
+        LOG_WARN("ConversationManager", "SpeechToText unavailable - continuing in touch/mic-only mode");
     }
 
     if (!geminiClient.isInitialized()) {
@@ -100,9 +102,11 @@ bool ConversationManager::initialize() noexcept {
     }
 
     if (!textToSpeech.isInitialized()) {
-        LOG_ERROR("ConversationManager", "TextToSpeech not initialized");
-        setError(ConversationError::TTS_ERROR);
-        return false;
+        // Degraded mode: without TTS the conversation engine keeps its touch
+        // state machine, mic, OLED status and LED ring fully functional; only
+        // the spoken reply is skipped. Speech output is re-enabled once a TTS
+        // provider becomes available again.
+        LOG_WARN("ConversationManager", "TextToSpeech unavailable - text/reply mode only");
     }
 
     if (!displayManager.isInitialized()) {
@@ -120,9 +124,11 @@ bool ConversationManager::initialize() noexcept {
         speechToText.stopRecognition();
     }
 
-    // Voice-triggered wake: enable hardware VAD; it publishes VOICE_DETECTED
-    // on the event bus, which ensureEventSubscriptions() routes to onVoiceDetected().
-    if (audioManager.isInitialized()) {
+    // Voice-triggered wake: enable hardware VAD only when the wake-word engine
+    // is actually on. In push-to-talk mode (wake word off) the mic stays off
+    // until a touch gesture opens it, so no VOICE_DETECTED chatter can fire on
+    // ambient noise / a floating mic.
+    if (m_wakeWordEnabled && audioManager.isInitialized()) {
         audioManager.setVoiceActivityMonitoring(true);
     }
 
@@ -252,6 +258,10 @@ bool ConversationManager::startConversation() noexcept {
     if (m_privacyMode) {
         LOG_WARN("ConversationManager", "Cannot start conversation in privacy mode");
         displayManager.showMessage("PRIVACY MODE", "Mic disabled");
+        return false;
+    }
+    if (m_setupMode) {
+        LOG_WARN("ConversationManager", "Cannot start conversation in setup mode");
         return false;
     }
     if (m_currentState != ConversationState::IDLE && m_currentState != ConversationState::COMPLETED && m_currentState != ConversationState::ERROR) {
@@ -579,7 +589,7 @@ void ConversationManager::processButtonPress() noexcept {
     }
 
     // Muted/privacy mode: touch never opens the microphone.
-    if (m_privacyMode) return;
+    if (m_privacyMode || m_setupMode) return;
 
     if (m_currentState == ConversationState::IDLE || m_currentState == ConversationState::COMPLETED) {
         m_lastWakeSource = "touch";
@@ -1191,6 +1201,26 @@ void ConversationManager::setError(ConversationError error) noexcept {
     m_lastError = error;
     m_result.error = error;
     LOG_ERROR("ConversationManager", "Error %d", static_cast<int>(error));
+
+    AuraErrorSeverity sev = AuraErrorSeverity::ERROR;
+    const char* code = "CONV_UNKNOWN";
+    const char* title = "Conversation failed";
+    switch (error) {
+        case ConversationError::STT_ERROR:
+            code = "CONV_STT"; title = "Speech recognition failed"; break;
+        case ConversationError::GEMINI_ERROR:
+            code = "CONV_GEMINI"; title = "Language model request failed"; break;
+        case ConversationError::TTS_ERROR:
+            code = "CONV_TTS"; title = "Speech synthesis failed"; break;
+        case ConversationError::TIMEOUT:
+            code = "CONV_TIMEOUT"; title = "Conversation timed out"; sev = AuraErrorSeverity::WARNING; break;
+        case ConversationError::NETWORK:
+            code = "CONV_NETWORK"; title = "Network failure during conversation"; sev = AuraErrorSeverity::WARNING; break;
+        case ConversationError::UNKNOWN:
+        default:
+            code = "CONV_UNKNOWN"; title = "Conversation error"; break;
+    }
+    errorManager.report(sev, "Conversation", code, title, "");
 }
 
 void ConversationManager::resetConversation() noexcept {
@@ -1211,6 +1241,13 @@ void ConversationManager::storeHistoryEntry() noexcept {
 }
 
 void ConversationManager::handleListening() noexcept {
+    if (!speechToText.isInitialized()) {
+        // No STT backend: keep the mic live so touch still owns the hardware
+        // (double tap / 5s hold still stop or switch modes). Nothing to
+        // transcribe, so simply stay LISTENING until the gesture ends it.
+        return;
+    }
+
     if (!m_sttTriggered) {
         if (speechToText.startRecognition(RecognitionMode::ONESHOT)) {
             m_sttTriggered = true;
@@ -1414,6 +1451,15 @@ void ConversationManager::handleThinking() noexcept {
 }
 
 void ConversationManager::handleSpeaking() noexcept {
+    if (!textToSpeech.isInitialized()) {
+        // TTS unavailable: silently complete the turn. The reply was already
+        // delivered to the OLED via AssistantOutput::route().
+        LOG_WARN("ConversationManager", "TTS unavailable - skipping speech");
+        m_ttsTriggered = false;
+        changeState(ConversationState::COMPLETED);
+        return;
+    }
+
     const bool speakEnabled = settingsManager.isInitialized()
         ? settingsManager.getOutputToSpeaker() : true;
 
@@ -1668,6 +1714,16 @@ void ConversationManager::handleTimeout() noexcept {
 
     if (m_currentState != ConversationState::IDLE && m_currentState != ConversationState::COMPLETED && m_currentState != ConversationState::ERROR && m_currentState != ConversationState::PAUSED) {
         if (now - m_stateStartTime >= kStateTimeoutMs) {
+            // Degraded backends must not turn a long idle mic wait into a red
+            // ERROR. With no STT provider the list is inherently unbounded, so
+            // end the turn cleanly (mic off) and return to the idle face.
+            if (m_currentState == ConversationState::LISTENING && !speechToText.isInitialized()) {
+                LOG_WARN("ConversationManager", "LISTENING idle timeout (no STT backend) - returning to idle");
+                if (m_micActive) stopMic();
+                resetConversation();
+                changeState(ConversationState::IDLE);
+                return;
+            }
             LOG_WARN("ConversationManager", "State %d timeout", static_cast<int>(m_currentState));
             setError(ConversationError::TIMEOUT);
             changeState(ConversationState::ERROR);

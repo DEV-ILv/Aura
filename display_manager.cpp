@@ -1,6 +1,7 @@
 #include "display_manager.h"
 #include <Wire.h>
 #include <math.h>
+#include <time.h>
 
 DisplayManager displayManager;
 
@@ -51,7 +52,9 @@ DisplayManager::DisplayManager() noexcept
     , m_micIconPhase(0)
     , m_dashboardDirty(true)
     , m_dashboardUntil(0)
-    , m_lastDashboardRefresh(0) {
+    , m_lastDashboardRefresh(0)
+    , m_clockMinute(255)
+    , m_clockText{'-', '-', ':', '-', '-', '\0'} {
     for (auto& line : m_cachedGreetingLines) {
         line = String();
     }
@@ -115,6 +118,7 @@ void DisplayManager::update() noexcept {
 
     // Face-first UX: informational/on-demand screens return to the presence.
     if (m_currentState == DisplayState::HOME && m_dashboardUntil != 0 && now >= m_dashboardUntil && !m_statusPinned) {
+        m_messageActive = false;
         changeState(DisplayState::FACE);
     } else if ((m_currentState == DisplayState::NOTIFICATION || m_currentState == DisplayState::REMINDER)
                && (now - m_stateStartTime >= m_infoReturnMs)) {
@@ -275,6 +279,7 @@ void DisplayManager::showHome() noexcept {
 
 void DisplayManager::showFace() noexcept {
     if (!m_initialized) return;
+    m_messageActive = false;
     m_face.setExpression(FaceExpression::IDLE);
     changeState(DisplayState::FACE);
     m_screenDirty = true;
@@ -397,6 +402,7 @@ void DisplayManager::showMessage(const String& title, const String& body, const 
     m_cachedTitle = title;
     m_cachedMessage = body;
     m_cachedFooter = footer;
+    m_messageActive = true;
     changeState(DisplayState::HOME);
     m_dashboardUntil = millis() + m_infoReturnMs;
     m_screenDirty = true;
@@ -623,8 +629,66 @@ void DisplayManager::renderBoot(uint8_t progress) noexcept {
     }
 }
 
+namespace {
+constexpr int32_t kIstSecondsOffset = 19800;      // India Standard Time, UTC+05:30
+}
+
 void DisplayManager::renderFace() noexcept {
     m_face.render(millis());
+    renderIdleClock();
+}
+
+void DisplayManager::renderIdleClock() noexcept {
+    // The clock is only the AURA primary content while AURA is genuinely IDLE.
+    // Any active state (listening/thinking/speaking/etc.) swaps the expression
+    // away from IDLE, which hides the clock automatically.
+    if (m_face.getExpression() != FaceExpression::IDLE) {
+        return;
+    }
+
+    // existing reliable time source: the NTP-synced RTC (WifiManager configTime).
+    // time() always returns UTC epoch; gmtime_r decodes it as UTC regardless of
+    // any configured zone offset, so the IST shift below can never double-apply.
+    time_t raw = time(nullptr);
+    struct tm ti = {};
+    if (raw > 0 && gmtime_r(&raw, &ti) != nullptr) {
+        // The persistent NTP clock is stored as UTC; the OLED clock MUST be IST.
+        time_t ist = raw + kIstSecondsOffset;
+        struct tm it = {};
+        if (gmtime_r(&ist, &it) != nullptr) {
+            // Show a time-unavailable placeholder until the RTC actually holds a
+            // synced epoch, instead of displaying a garbage wall-clock time.
+            if (it.tm_year < (2020 - 1900)) {
+                m_clockText[0] = '-'; m_clockText[1] = '-';
+                m_clockText[2] = ':'; m_clockText[3] = '-'; m_clockText[4] = '-';
+                m_clockText[5] = '\0';
+            } else {
+                const uint8_t minute = static_cast<uint8_t>(it.tm_min);
+                if (minute != m_clockMinute) {
+                    m_clockMinute = minute;
+                    snprintf(m_clockText, sizeof(m_clockText), "%02d:%02d",
+                             it.tm_hour, it.tm_min);
+                }
+            }
+        } else {
+            m_clockMinute = 255;
+            m_clockText[5] = '\0';
+        }
+    } else {
+        m_clockMinute = 255;
+        m_clockText[5] = '\0';
+    }
+
+    // Draw the clock prominently along the top, clear of the top-right mic icon
+    // (x >= 116) and of the face below (eyes start ~y=21).
+    m_display.fillRect(0, 0, 112, 14, SH110X_BLACK);
+    m_display.setTextSize(2);
+    m_display.setTextColor(SH110X_WHITE);
+    int16_t tx = 0, ty = 0;
+    uint16_t tw = 0, th = 0;
+    m_display.getTextBounds(m_clockText, 0, 0, &tx, &ty, &tw, &th);
+    m_display.setCursor((m_displayWidth - tw) / 2, 2);
+    m_display.print(m_clockText);
 }
 
 void DisplayManager::updateHomeData(const String& personalityName, const String& lastActivity,
@@ -753,6 +817,12 @@ void DisplayManager::drawMicGlyph(uint8_t x0, uint8_t y0) noexcept {
 
 
 void DisplayManager::renderHome() noexcept {
+    // showMessage(): the AURA SETUP / privacy / status text is the primary
+    // content of the HOME screen, not the dashboard widgets.
+    if (m_messageActive) {
+        renderMessage();
+        return;
+    }
     m_display.clearDisplay();
     drawStatusBar();
 
@@ -1524,6 +1594,13 @@ void DisplayManager::updateScreenTimeout() noexcept {
 
     // The presence face is always awake; only informational screens sleep.
     if (m_currentState == DisplayState::FACE) {
+        m_lastActivityTime = millis();
+        return;
+    }
+
+    // Pinned status screens (AURA SETUP, privacy) must stay lit indefinitely:
+    // setup waits on a real user action and must never blank the OLED.
+    if (m_statusPinned) {
         m_lastActivityTime = millis();
         return;
     }
