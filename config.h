@@ -143,6 +143,20 @@ constexpr const char* kCompiler     = __VERSION__;
 // Touch polling cadence (resulted in the main conversation loop).
 #define TOUCH_POLL_INTERVAL_MS 20UL
 
+// Touch diagnostics (DEVELOPMENT ONLY): rate-limited touch telemetry lines
+// (raw/debounced state, transition count, press/release timestamps, gestures).
+// Set to 0 for production builds — when 0 the diagnostics compile out entirely,
+// so there is zero runtime cost and zero Serial output from this feature.
+#define TOUCH_DIAGNOSTICS_ENABLED 1
+#define TOUCH_DIAG_INTERVAL_MS    5000UL
+
+// Minimum gap after a *finalized* touch gesture before a new press is accepted.
+// Suppresses rapid re-triggering from a hand hovering/jittering at the edge of
+// the sensing range. Deliberately SHORTER than DOUBLE_TAP_WINDOW_MS and a
+// pending double-tap second tap is always allowed through, so the double-tap
+// timing is never altered.
+#define TOUCH_GESTURE_GAP_MS      250UL
+
 //======================================================
 // HARDWARE PROFILE - current prototype (MK-II)
 //======================================================

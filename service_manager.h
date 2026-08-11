@@ -54,12 +54,17 @@ private:
     static constexpr const char* kLogCategory = "ServiceManager";
     static constexpr size_t kMaxServices = 64;
     static constexpr unsigned long kHealthIntervalMs = 10000UL;
+    static constexpr unsigned long kHealthDiagnosticIntervalMs = 60000UL;
 
     int FindService(const String& name) const noexcept;
 
     bool m_initialized;
     std::vector<Service*> m_services;
     unsigned long m_lastHealthCheck;
+    unsigned long m_healthCheckRuns;
+    unsigned long m_healthLogsEmitted;
+    unsigned long m_lastHealthBasisMs;
+    unsigned long m_lastDiagnosticLogMs;
 };
 
 extern ServiceManager serviceManager;

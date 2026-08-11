@@ -172,6 +172,29 @@ verification, rotation, and CI workflows.
 - The Supabase **service role key** must never be embedded in the companion
   app. Only the publishable (anon) key is client-visible, and data is
   protected by Row Level Security (RLS).
+- **Firmware build artifacts embed secrets.** Compiled images under
+  `build/` (`*.bin`, `*.merged.bin`, `*.elf`) contain whatever API keys were
+  present in `secrets.h` at compile time, and they are extractable with a
+  simple `strings` scan. `build/` is git-ignored — **never publish, share, or
+  distribute build artifacts**. For firmware meant for distribution, build
+  with placeholder `secrets.h` values and provision real keys at runtime via
+  Web Portal → Settings.
+- The companion app takes cloud credentials via `--dart-define`
+  (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) at build time; no secrets are
+  hard-coded in the source tree. `.env.example` and `secrets.h.example` are
+  placeholder-only templates and are safe to commit.
+
+### Credential rotation & exposure policy
+
+- Rotate an API key or the OTA signing key **only when a real secret was
+  actually exposed outside this machine** — published in a repository, shared
+  as a file, uploaded to a public service, or embedded in a distributed
+  binary.
+- A leak confined to your own machine (e.g. a local `build/` artifact) does
+  **not** require rotation; ignore or delete the artifact instead.
+- To rotate the OTA signing key, follow `docs/ota-signing.md` §6
+  (key rotation). To rotate an API key, revoke it in the provider console and
+  update `secrets.h` (or the runtime setting via Web Portal → Settings).
 
 ---
 
@@ -200,15 +223,19 @@ verification, rotation, and CI workflows.
 2. Never ship a development build: ensure `AURA_DEVELOPMENT_MODE` is `0`
    (production) before any release, and verify with the build-mode banner
    printed to Serial on boot.
-2. Keep the firmware signing private key offline and rotate it if it may have
-   leaked.
-3. Use unique, strong Wi-Fi and admin passwords; never reuse `secrets.h`
+3. Keep the firmware signing private key offline and rotate it only if it was
+   actually exposed outside this machine (see rotation policy above).
+4. Use unique, strong Wi-Fi and admin passwords; never reuse `secrets.h`
    values across devices.
-4. Do not forward device ports (80/81) to the public internet.
-5. Update firmware only from sources you trust; prefer signed OTA images.
-6. Keep the Supabase project locked down: enable RLS on all tables, use the
+5. Do not forward device ports (80/81) to the public internet.
+6. Update firmware only from sources you trust; prefer signed OTA images.
+7. Keep the Supabase project locked down: enable RLS on all tables, use the
    anon key only in the client, and store the service role key in a server
    environment.
+8. Never publish `build/` output or distribute firmware images compiled with
+   real `secrets.h` values — API keys are embedded in the binary and
+   extractable with `strings`. Build distributable images with placeholder
+   secrets and provision keys at runtime.
 
 ---
 

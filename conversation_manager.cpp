@@ -72,6 +72,11 @@ ConversationManager::ConversationManager() noexcept
     , m_lastTapTime(0)
     , m_doubleTapPending(false)
     , m_doubleTapStart(0)
+    , m_touchRaw(false)
+    , m_touchDebounced(false)
+    , m_touchTransitionCount(0)
+    , m_touchDiagLastLogMs(0)
+    , m_touchLastGestureEndMs(0)
     , m_setupHoldTriggered(false)
     , m_lastActivityTime(0)
     , m_lastPeriodicCheckTime(0)
@@ -502,22 +507,47 @@ void ConversationManager::processTouch() noexcept {
     const bool touched = (digitalRead(TOUCH_PIN) == HIGH);
     const unsigned long now = millis();
 
+#if TOUCH_DIAGNOSTICS_ENABLED
+    m_touchRaw = touched;
+#endif
+
     // --- Edge-based debounce ------------------------------------------------
     // Every raw transition restarts the debounce timer. The stable, debounced
     // state is only re-evaluated after TOUCH_DEBOUNCE_MS without a change.
     if (touched != m_touchLastRaw) {
         m_touchDebounceStart = now;
         m_touchLastRaw = touched;
+#if TOUCH_DIAGNOSTICS_ENABLED
+        m_touchTransitionCount++;
+#endif
         return;
     }
     if (now - m_touchDebounceStart < TOUCH_DEBOUNCE_MS) return;
 
+#if TOUCH_DIAGNOSTICS_ENABLED
+    m_touchDebounced = touched;
+#endif
+
     if (touched && !m_touchActive) {
         // --- Press: begin tracking a new gesture --------------------------
+        // False-trigger guard: a press arriving very soon (< TOUCH_GESTURE_GAP_MS)
+        // after a finalized gesture is hover/bounce re-trigger, not a deliberate
+        // tap. A pending double-tap second tap is ALWAYS allowed through so the
+        // double-tap timing defined in config.h is never altered.
+        const bool pendingSecondTap =
+            m_doubleTapPending && (now - m_doubleTapStart <= DOUBLE_TAP_WINDOW_MS);
+        if (!pendingSecondTap && (now - m_touchLastGestureEndMs) < TOUCH_GESTURE_GAP_MS) {
+            return;
+        }
         m_touchActive = true;
         m_touchPressStart = now;
         m_setupHoldTriggered = false;
-        LOG_DEBUG("ConversationManager", "TOUCH_DOWN");
+#if TOUCH_DIAGNOSTICS_ENABLED
+        LOG_INFO("TouchDiag", "TOUCH_DOWN raw=%d trans=%lu press_at=%lu",
+                 static_cast<int>(m_touchRaw),
+                 static_cast<unsigned long>(m_touchTransitionCount),
+                 static_cast<unsigned long>(now));
+#endif
     } else if (touched && m_touchActive) {
         // --- Still pressed: arm the 5-second setup hold --------------------
         // Trigger inside the press so the user sees AURA SETUP at exactly
@@ -535,7 +565,14 @@ void ConversationManager::processTouch() noexcept {
     } else if (!touched && m_touchActive) {
         // --- Release -------------------------------------------------------
         m_touchActive = false;
-        LOG_DEBUG("ConversationManager", "TOUCH_UP");
+        m_touchLastGestureEndMs = now;
+#if TOUCH_DIAGNOSTICS_ENABLED
+        LOG_INFO("TouchDiag", "TOUCH_UP raw=%d trans=%lu release_at=%lu hold_ms=%lu",
+                 static_cast<int>(m_touchRaw),
+                 static_cast<unsigned long>(m_touchTransitionCount),
+                 static_cast<unsigned long>(now),
+                 static_cast<unsigned long>(now - m_touchPressStart));
+#endif
 
         // A completed 5-second setup hold has already handled the gesture.
         if (m_setupHoldTriggered) {
@@ -575,6 +612,20 @@ void ConversationManager::processTouch() noexcept {
         // it must never be a tap, a privacy toggle, or a setup trigger.
         LOG_DEBUG("ConversationManager", "HOLD(%lu) ignored", holdMs);
     }
+
+#if TOUCH_DIAGNOSTICS_ENABLED
+    // Rate-limited live telemetry (no Serial flood): one line per interval.
+    if (now - m_touchDiagLastLogMs >= TOUCH_DIAG_INTERVAL_MS) {
+        m_touchDiagLastLogMs = now;
+        LOG_INFO("TouchDiag",
+                 "TOUCH RAW:%d DEBOUNCED:%d PRESS:%s HOLD_MS:%lu TRANS:%lu",
+                 static_cast<int>(m_touchRaw),
+                 static_cast<int>(m_touchDebounced),
+                 m_touchActive ? "DOWN" : "UP",
+                 m_touchActive ? static_cast<unsigned long>(now - m_touchPressStart) : 0UL,
+                 static_cast<unsigned long>(m_touchTransitionCount));
+    }
+#endif
 }
 
 // Single-tap button handler
@@ -605,6 +656,9 @@ void ConversationManager::processButtonPress() noexcept {
 
 void ConversationManager::handleTap() noexcept {
     m_lastTouchEvent = "single";
+#if TOUCH_DIAGNOSTICS_ENABLED
+    LOG_INFO("TouchDiag", "GESTURE: SINGLE TAP");
+#endif
     if (eventBus.isInitialized()) {
         eventBus.publish(EventType::TOUCH_SINGLE, "ConversationManager", "");
     }
@@ -613,6 +667,9 @@ void ConversationManager::handleTap() noexcept {
 
 void ConversationManager::handleDoubleTap() noexcept {
     m_lastTouchEvent = "double";
+#if TOUCH_DIAGNOSTICS_ENABLED
+    LOG_INFO("TouchDiag", "GESTURE: DOUBLE TAP");
+#endif
     if (eventBus.isInitialized()) {
         eventBus.publish(EventType::TOUCH_DOUBLE, "ConversationManager", "");
     }
@@ -621,6 +678,9 @@ void ConversationManager::handleDoubleTap() noexcept {
 
 void ConversationManager::handleVeryLongPress() noexcept {
     m_lastTouchEvent = "very_long";
+#if TOUCH_DIAGNOSTICS_ENABLED
+    LOG_INFO("TouchDiag", "GESTURE: SETUP HOLD");
+#endif
     enterSetupMode();   // 5s continuous hold — AURA SETUP
 }
 

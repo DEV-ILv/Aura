@@ -5,7 +5,11 @@ ServiceManager serviceManager;
 
 ServiceManager::ServiceManager() noexcept
     : m_initialized(false)
-    , m_lastHealthCheck(0) {
+    , m_lastHealthCheck(0)
+    , m_healthCheckRuns(0)
+    , m_healthLogsEmitted(0)
+    , m_lastHealthBasisMs(0)
+    , m_lastDiagnosticLogMs(0) {
 }
 
 ServiceManager::~ServiceManager() noexcept {
@@ -31,9 +35,19 @@ void ServiceManager::Update() noexcept {
 
     unsigned long now = millis();
     if (now - m_lastHealthCheck >= kHealthIntervalMs) {
+        m_lastHealthBasisMs = now - m_lastHealthCheck;
         m_lastHealthCheck = now;
         ReportHealth();
         RecoverFailingServices();
+    }
+
+    if (now - m_lastDiagnosticLogMs >= kHealthDiagnosticIntervalMs) {
+        LOG_INFO(kLogCategory,
+                 "health diag: runs=%lu logs=%lu lastRunIntervalMs=%lu",
+                 m_healthCheckRuns, m_healthLogsEmitted, m_lastHealthBasisMs);
+        m_healthCheckRuns = 0;
+        m_healthLogsEmitted = 0;
+        m_lastDiagnosticLogMs = now;
     }
 }
 
@@ -151,11 +165,19 @@ bool ServiceManager::ResumeAll() noexcept {
 }
 
 void ServiceManager::ReportHealth() noexcept {
+    m_healthCheckRuns++;
+
+    const unsigned long now = millis();
     for (auto* svc : m_services) {
-        auto health = svc->Health();
-        if (health != ServiceHealth::HEALTHY) {
+        const ServiceHealth health = svc->Health();
+        if (health == ServiceHealth::HEALTHY) {
+            continue;
+        }
+        if ((now - svc->m_lastHealthLogMs) >= kHealthIntervalMs) {
+            m_healthLogsEmitted++;
             LOG_WARNING(kLogCategory, "%s health: %d",
                         svc->GetName().c_str(), static_cast<int>(health));
+            svc->m_lastHealthLogMs = now;
         }
     }
 }

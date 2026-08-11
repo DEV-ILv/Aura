@@ -109,6 +109,8 @@ protected:
     unsigned long m_startTime;
     uint32_t m_restartCount;
     bool m_errorState;
+
+    unsigned long m_lastHealthLogMs;
 };
 
 #endif

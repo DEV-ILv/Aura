@@ -8,7 +8,8 @@ Service::Service(const char* name, BootPriority priority) noexcept
     , m_lastErrorTime(0)
     , m_startTime(0)
     , m_restartCount(0)
-    , m_errorState(false) {}
+    , m_errorState(false)
+    , m_lastHealthLogMs(0) {}
 
 Service::~Service() noexcept = default;
 

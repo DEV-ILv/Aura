@@ -533,6 +533,14 @@ void handleVeryLongPress() noexcept;
     bool m_doubleTapPending;
     unsigned long m_doubleTapStart;
 
+    // Touch diagnostics (dev-only, rate-limited; compiled out entirely when
+    // TOUCH_DIAGNOSTICS_ENABLED == 0).
+    bool m_touchRaw;
+    bool m_touchDebounced;
+    unsigned long m_touchTransitionCount;
+    unsigned long m_touchDiagLastLogMs;
+    unsigned long m_touchLastGestureEndMs;
+
     // Set the moment a continuous hold passes SETUP_HOLD_MS so the release
     // never fires a tap/double-tap as well. Guards enterSetupMode() from
     // being triggered twice (the very-long-press toggle trap).
