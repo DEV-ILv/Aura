@@ -71,6 +71,7 @@
 #include "resilience_manager.h"
 #include <ESPmDNS.h>
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 
 /// Global SystemManager instance
 SystemManager systemManager;
@@ -154,6 +155,20 @@ String generateDefaultPassword() noexcept {
  */
 void safeAssign(String& dest, const String& src) noexcept {
     dest = src;
+}
+
+/**
+ * @brief Human-readable label for a persisted Wi-Fi state.
+ */
+const char* wifiStateToString(WifiState state) noexcept {
+    switch (state) {
+        case WifiState::CONNECTING:   return "CONNECTING";
+        case WifiState::CONNECTED:    return "CONNECTED";
+        case WifiState::ACCESS_POINT: return "ACCESS_POINT";
+        case WifiState::ERROR:        return "ERROR";
+        case WifiState::DISCONNECTED:
+        default:                      return "DISCONNECTED";
+    }
 }
 
 }  // namespace
@@ -1365,11 +1380,46 @@ void SystemManager::printBootBanner() noexcept {
     Serial.printf("Enabled  : %s\n", serviceStatusManager.getConnectedJson().c_str());
     Serial.printf("Disabled : %s\n", serviceStatusManager.getDisabledJson().c_str());
 
-    if (wifiManager.isConnected()) {
-        Serial.printf("Wi-Fi    : CONNECTED (%s)\n", WiFi.SSID().c_str());
-    } else {
-        Serial.printf("Wi-Fi    : AP Mode (%s)\n", Secrets::AP_SSID);
+    // Boot diagnostics: reset reason + memory + Wi-Fi state. Kept as a single
+    // banner block so a repeat reset's cause remains diagnosable on the wire.
+    {
+        static const char* kResetNames[] = {
+            "UNKNOWN",       // ESP_RST_UNKNOWN
+            "POWER_ON",      // ESP_RST_POWERON
+            "EXT",           // ESP_RST_EXT
+            "SOFTWARE",      // ESP_RST_SW
+            "PANIC",         // ESP_RST_PANIC
+            "INT_WDT",       // ESP_RST_INT_WDT
+            "TASK_WDT",      // ESP_RST_TASK_WDT
+            "WDT",           // ESP_RST_WDT
+            "DEEP_SLEEP",    // ESP_RST_DEEPSLEEP
+            "BROWN_OUT",     // ESP_RST_BROWNOUT
+            "SDIO",          // ESP_RST_SDIO
+        };
+        esp_reset_reason_t resetReason = esp_reset_reason();
+        const char* resetName = (static_cast<int>(resetReason) >= 0 &&
+                                 static_cast<int>(resetReason) <
+                                     static_cast<int>(sizeof(kResetNames) / sizeof(kResetNames[0])))
+                                    ? kResetNames[static_cast<int>(resetReason)]
+                                    : "UNKNOWN";
+        Serial.printf("Reset    : %s\n", resetName);
+        Serial.printf("Boots    : %u\n", static_cast<unsigned>(uptimeMonitor.bootCount()));
+        Serial.printf("Prev     : wifiState=%s reconnectCount=%u\n",
+            wifiStateToString(wifiManager.getLastPersistedState()),
+            static_cast<unsigned>(wifiManager.getLastPersistedReconnectCount()));
+        Serial.printf("Heap     : free %u B, min %u B, largest block %u B\n",
+            static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMinFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        Serial.printf("Wi-Fi    : %s (state=%d mode=%d channel=%u reconnectCount=%u lastEvent=%d)\n",
+            wifiManager.getStateString(),
+            static_cast<int>(wifiManager.getState()),
+            static_cast<int>(WiFi.getMode()),
+            static_cast<unsigned>(wifiManager.getChannel()),
+            static_cast<unsigned>(wifiManager.getReconnectCount()),
+            static_cast<int>(wifiManager.getLastEvent()));
     }
+
     Serial.printf("REST     : http://%s/api\n", WiFi.localIP().toString().c_str());
     Serial.printf("WebSocket: ws://%s:81\n", WiFi.localIP().toString().c_str());
     Serial.printf("Gemini   : %s\n",
@@ -1383,10 +1433,21 @@ void SystemManager::printBootBanner() noexcept {
 void SystemManager::monitorMemory() noexcept {
     m_info.freeHeap = ESP.getFreeHeap();
     m_info.minimumHeap = ESP.getMinFreeHeap();
+    m_info.maxBlockHeap = ESP.getMaxAllocHeap();
     if (m_info.freeHeap < 20000) {
         errorManager.report(AuraErrorSeverity::WARNING, "Memory", "LOW_HEAP",
                             "Low free heap",
                             String("Free heap dropped to ") + String(m_info.freeHeap) + " bytes");
+    }
+    // Fragmentation signal: a small largest contiguous block with otherwise
+    // adequate free heap indicates heap fragmentation (worth surfacing once,
+    // deduplicated by ErrorManager by component+code).
+    if (m_info.freeHeap >= 30000 && m_info.maxBlockHeap < 8000) {
+        errorManager.report(AuraErrorSeverity::WARNING, "Memory", "LOW_MAX_BLOCK",
+                            "Heap fragmentation detected",
+                            String("Largest contiguous block is ") + String(m_info.maxBlockHeap) + " bytes");
+    } else {
+        errorManager.resolve("Memory", "LOW_MAX_BLOCK");
     }
 }
 
@@ -1401,11 +1462,13 @@ void SystemManager::monitorTasks() noexcept {
 }
 
 void SystemManager::monitorWiFi() noexcept {
-    if (!wifiManager.isConnected()) {
-        if (wifiManager.getState() == WifiState::DISCONNECTED) {
-            wifiManager.reconnect();
-        }
-    }
+    // WifiManager owns reconnection through its bounded state machine
+    // (CONNECTING -> DISCONNECTED backoff -> ERROR bounded-rate retry).
+    // Calling wifiManager.reconnect() here every health tick (5s) previously
+    // bypassed that budget and forced repeated WiFi.mode()/begin() calls, a
+    // documented ESP32 crash vector. Nothing is forced here; checkHealth()
+    // surfaces link state (and sets m_info.wifiConnected) via errorManager.
+    (void)wifiManager.getState();  // keep state sampled for future diagnostics
 }
 
 void SystemManager::monitorOTA() noexcept {

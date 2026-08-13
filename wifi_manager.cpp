@@ -12,6 +12,7 @@ WifiManager wifiManager;
 namespace {
   constexpr uint32_t CONNECTION_TIMEOUT_MS = 15000;      // 15 seconds
   constexpr uint32_t RECONNECT_DELAY_MS = 5000;          // 5 seconds
+  constexpr uint32_t ERROR_RETRY_DELAY_MS = 30000;       // 30s backoff after budget exhausted
   constexpr uint32_t CONNECTION_CHECK_INTERVAL_MS = 1000; // 1 second
   constexpr uint32_t TIME_SYNC_INTERVAL_MS = 3600000;    // 1 hour
   constexpr uint32_t TIME_SYNC_TIMEOUT_MS = 30000;       // 30 seconds for NTP
@@ -21,6 +22,8 @@ namespace {
   constexpr const char* PREFERENCES_NAMESPACE = "aura_wifi";
   constexpr const char* SSID_KEY = "ssid";
   constexpr const char* PASSWORD_KEY = "password";
+  constexpr const char* LAST_STATE_KEY = "last_state";
+  constexpr const char* LAST_RECONNECT_KEY = "last_reconnect";
 }
 
 /**
@@ -38,7 +41,12 @@ WifiManager::WifiManager() noexcept
       m_connecting(false),
       m_mdnsStarted(false),
       m_lastConnectionCheck(0),
-      m_lastTimeSyncAttempt(0) {
+      m_lastTimeSyncAttempt(0),
+      m_reconnectCount(0),
+      m_currentChannel(0),
+      m_lastEvent(WL_IDLE_STATUS),
+      m_lastPersistedState(WifiState::DISCONNECTED),
+      m_lastPersistedReconnect(0) {
   memset(m_ssid, 0, sizeof(m_ssid));
   memset(m_password, 0, sizeof(m_password));
   memset(m_hostname, 0, sizeof(m_hostname));
@@ -64,13 +72,17 @@ bool WifiManager::initialize() noexcept {
   Logger::info("WifiManager", "Initializing");
   
   // Set WiFi mode to station
-  WiFi.mode(WIFI_STA);
+  ensureMode(WIFI_STA);
   WiFi.setHostname(m_hostname);
   
   // Load stored credentials
   if (!loadCredentials()) {
     Logger::debug("WifiManager", "No stored credentials found");
   }
+  
+  // Load persisted diagnostics (last Wi-Fi state/reconnect count from the
+  // previous session) so a restart can report what the radio was doing.
+  loadDiagnostics();
   
   // Start mDNS
   if (!startMDNS()) {
@@ -120,7 +132,15 @@ void WifiManager::update() noexcept {
       break;
       
     case WifiState::ERROR:
-      handleReconnect();
+      // Bounded-rate recovery owned by WifiManager: once the per-cycle
+      // attempt budget is exhausted, keep retrying at the slow backoff so the
+      // device recovers when the network returns. attemptConnection() guards
+      // WiFi.mode() (ensureMode) so the radio is not re-initialized.
+      if (currentMillis - m_reconnectTimer >= ERROR_RETRY_DELAY_MS) {
+        m_connectionAttempts = 1;
+        m_reconnectTimer = currentMillis;
+        attemptConnection();
+      }
       break;
   }
   
@@ -171,7 +191,7 @@ bool WifiManager::connect(const char* ssid, const char* password) noexcept {
   saveCredentials(m_ssid, m_password);
   
   // Set WiFi mode to station
-  WiFi.mode(WIFI_STA);
+  ensureMode(WIFI_STA);
   WiFi.setHostname(m_hostname);
   
   // Initiate connection
@@ -185,6 +205,7 @@ bool WifiManager::connect(const char* ssid, const char* password) noexcept {
   m_connectionTimer = millis();
   m_connecting = true;
   m_connectionAttempts = 1;
+  m_reconnectCount++;
   m_timeSynced = false;
   
   return true;
@@ -215,6 +236,15 @@ bool WifiManager::reconnect() noexcept {
     m_lastError = 2;
     return false;
   }
+
+  // Prevent stacked reconnect triggers: if a connection attempt is already in
+  // flight (from boot, low-power exit, resilience recovery, or the state
+  // machine), do not re-issue WiFi.begin() — repeated begin() re-initializes
+  // the radio and is a documented crash vector on ESP32.
+  if (m_currentState == WifiState::CONNECTING) {
+    Logger::debug("WifiManager", "Reconnect requested while connecting; ignoring duplicate");
+    return true;
+  }
   
   Logger::info("WifiManager", "Reconnecting to %s", m_ssid);
   m_connectionAttempts = 0;
@@ -239,7 +269,7 @@ bool WifiManager::startAccessPoint(const char* ssid, const char* password) noexc
   WiFi.disconnect(false);
   
   // Set AP mode
-  WiFi.mode(WIFI_AP);
+  ensureMode(WIFI_AP);
   
   bool success;
   if (password && strlen(password) > 0) {
@@ -251,12 +281,16 @@ bool WifiManager::startAccessPoint(const char* ssid, const char* password) noexc
   if (!success) {
     Logger::error("WifiManager", "Failed to start AP");
     m_lastError = 4;
+    errorManager.report(AuraErrorSeverity::ERROR, "WiFi", "WIFI_AP_START_FAIL",
+                        "Access point failed to start",
+                        "The setup AP could not be brought up on the radio");
     return false;
   }
   
   changeState(WifiState::ACCESS_POINT);
   m_accessPointMode = true;
   m_connecting = false;
+  m_currentChannel = 1;  // SoftAP default channel (no forced override)
   
   Logger::info("WifiManager", "AP started at %s", WiFi.softAPIP().toString().c_str());
   
@@ -369,6 +403,58 @@ bool WifiManager::setHostname(const char* hostname) noexcept {
  */
 WifiState WifiManager::getState() const noexcept {
   return m_currentState;
+}
+
+/**
+ * @brief Get the active Wi-Fi channel (single authority).
+ */
+uint8_t WifiManager::getChannel() const noexcept {
+  return m_currentChannel;
+}
+
+/**
+ * @brief Get the number of connection attempts made since boot.
+ */
+uint16_t WifiManager::getReconnectCount() const noexcept {
+  return m_reconnectCount;
+}
+
+/**
+ * @brief Truthful human-readable label for the current Wi-Fi state.
+ */
+const char* WifiManager::getStateString() const noexcept {
+  if (m_accessPointMode) {
+    return WiFi.isConnected() ? "AP_STA" : "SETUP_AP";
+  }
+  switch (m_currentState) {
+    case WifiState::CONNECTING:   return "STA_CONNECTING";
+    case WifiState::CONNECTED:    return "STA_CONNECTED";
+    case WifiState::ERROR:        return "ERROR";
+    case WifiState::ACCESS_POINT: return "SETUP_AP";
+    case WifiState::DISCONNECTED:
+    default:                      return "DISCONNECTED";
+  }
+}
+
+/**
+ * @brief Get the last Wi-Fi event code observed.
+ */
+wl_status_t WifiManager::getLastEvent() const noexcept {
+  return m_lastEvent;
+}
+
+/**
+ * @brief Get the Wi-Fi state persisted at the previous shutdown/restart.
+ */
+WifiState WifiManager::getLastPersistedState() const noexcept {
+  return m_lastPersistedState;
+}
+
+/**
+ * @brief Get the reconnect counter persisted at the previous shutdown/restart.
+ */
+uint16_t WifiManager::getLastPersistedReconnectCount() const noexcept {
+  return m_lastPersistedReconnect;
 }
 
 /**
@@ -587,6 +673,7 @@ void WifiManager::handleConnection() noexcept {
     m_connecting = false;
     m_connectionAttempts = 0;
     m_lastRSSI = WiFi.RSSI();
+    m_currentChannel = WiFi.channel();
     errorManager.resolve("WiFi", "WIFI_CONN_TIMEOUT");
     errorManager.resolve("WiFi", "WIFI_CONN_FAILED");
     errorManager.resolve("WiFi", "WIFI_NO_SSID");
@@ -607,9 +694,12 @@ void WifiManager::handleReconnect() noexcept {
     if (m_connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
       attemptConnection();
     } else {
-      Logger::error("WifiManager", "Reconnect failed");
-      changeState(WifiState::DISCONNECTED);
+      // Budget exhausted for this cycle; hand control to the ERROR state which
+      // performs bounded-rate retries instead of giving up permanently.
+      Logger::error("WifiManager", "Reconnect budget exhausted; entering bounded retry");
+      changeState(WifiState::ERROR);
       m_connectionAttempts = 0;
+      m_reconnectTimer = currentMillis;
     }
   }
 }
@@ -619,6 +709,7 @@ void WifiManager::handleReconnect() noexcept {
  */
 void WifiManager::handleEvents() noexcept {
     wl_status_t status = WiFi.status();
+    m_lastEvent = status;   // record last observed link event for diagnostics
 
     switch (status) {
         case WL_CONNECTED:
@@ -627,6 +718,7 @@ void WifiManager::handleEvents() noexcept {
                 changeState(WifiState::CONNECTED);
                 m_connectionAttempts = 0;
                 m_lastRSSI = WiFi.RSSI();
+                m_currentChannel = WiFi.channel();
                 errorManager.resolve("WiFi", "WIFI_CONN_TIMEOUT");
                 errorManager.resolve("WiFi", "WIFI_CONN_FAILED");
                 errorManager.resolve("WiFi", "WIFI_NO_SSID");
@@ -638,6 +730,10 @@ void WifiManager::handleEvents() noexcept {
             if (m_currentState == WifiState::CONNECTED) {
                 Logger::warning("WifiManager", "WiFi connection lost");
                 changeState(WifiState::DISCONNECTED);
+                // Seed the state machine so update() reconnects after the
+                // bounded backoff. WifiManager owns reconnection; no other
+                // module should force WiFi.begin()/reconnect().
+                m_connectionAttempts = 1;
                 m_reconnectTimer = millis();
                 errorManager.report(AuraErrorSeverity::WARNING, "WiFi", "WIFI_LINK_LOST",
                                     "WiFi connection lost",
@@ -686,11 +782,14 @@ void WifiManager::checkConnection() noexcept {
     }
     // Update RSSI for connected state
     m_lastRSSI = WiFi.RSSI();
+    m_currentChannel = WiFi.channel();
   } else {
     if (m_currentState == WifiState::CONNECTED) {
       Logger::warning("WifiManager", "Connection lost");
       changeState(WifiState::DISCONNECTED);
-      m_connectionAttempts = 0;
+      // Seed the reconnect state machine (bounded backoff), consistent with
+      // handleEvents WL_DISCONNECTED. Reconnect is WifiManager-owned.
+      m_connectionAttempts = 1;
       m_reconnectTimer = millis();
       m_timeSynced = false;
       errorManager.report(AuraErrorSeverity::WARNING, "WiFi", "WIFI_LINK_LOST",
@@ -712,7 +811,7 @@ bool WifiManager::attemptConnection() noexcept {
   
   Logger::debug("WifiManager", "Attempting connection");
   
-  WiFi.mode(WIFI_STA);
+  ensureMode(WIFI_STA);
   WiFi.setHostname(m_hostname);
   
   if (strlen(m_password) > 0) {
@@ -725,6 +824,7 @@ bool WifiManager::attemptConnection() noexcept {
   m_connectionTimer = millis();
   m_connecting = true;
   m_connectionAttempts++;
+  m_reconnectCount++;
   m_timeSynced = false;
   
   return true;
@@ -792,5 +892,58 @@ void WifiManager::resetTimers() noexcept {
 void WifiManager::changeState(WifiState newState) noexcept {
   if (m_currentState != newState) {
     m_currentState = newState;
+    persistDiagnostics();
   }
+}
+
+/**
+ * @brief Set the Wi-Fi radio mode only when it actually differs from the
+ *        current mode.
+ *
+ * Calling WiFi.mode() on every transition re-initializes the ESP32 network
+ * interface and can trigger a reset if done repeatedly (the root cause this
+ * change mitigates). Guarding the call keeps the radio in a stable mode and
+ * makes WifiManager the single owner of WiFi.mode().
+ */
+void WifiManager::ensureMode(wifi_mode_t mode) noexcept {
+  if (WiFi.getMode() != mode) {
+    WiFi.mode(mode);
+  }
+}
+
+/**
+ * @brief Load Wi-Fi diagnostics persisted at the previous shutdown.
+ */
+void WifiManager::loadDiagnostics() noexcept {
+  if (!m_preferences.begin(PREFERENCES_NAMESPACE, true)) {
+    m_lastPersistedState = WifiState::DISCONNECTED;
+    m_lastPersistedReconnect = 0;
+    return;
+  }
+  uint8_t rawState = m_preferences.getUChar(LAST_STATE_KEY, 0xFF);
+  m_lastPersistedReconnect = m_preferences.getUShort(LAST_RECONNECT_KEY, 0);
+  m_preferences.end();
+
+  // Clamp to the valid enum range.
+  if (rawState > static_cast<uint8_t>(WifiState::ERROR)) {
+    m_lastPersistedState = WifiState::DISCONNECTED;
+  } else {
+    m_lastPersistedState = static_cast<WifiState>(rawState);
+  }
+}
+
+/**
+ * @brief Persist Wi-Fi diagnostics at each state change.
+ *
+ * NVS writes are guarded to fire only when the state actually changes, so the
+ * flash write rate stays bounded (state transitions are rare) and the next
+ * boot can report what the radio was doing before the restart.
+ */
+void WifiManager::persistDiagnostics() noexcept {
+  if (!m_preferences.begin(PREFERENCES_NAMESPACE, false)) {
+    return;
+  }
+  m_preferences.putUChar(LAST_STATE_KEY, static_cast<uint8_t>(m_currentState));
+  m_preferences.putUShort(LAST_RECONNECT_KEY, m_reconnectCount);
+  m_preferences.end();
 }

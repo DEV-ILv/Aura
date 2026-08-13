@@ -43,6 +43,7 @@ struct SystemInfo {
     String deviceName;             ///< Device name
     uint32_t freeHeap;             ///< Current free heap (bytes)
     uint32_t minimumHeap;          ///< Minimum free heap (bytes)
+    uint32_t maxBlockHeap;         ///< Largest contiguous free block (bytes)
     uint32_t uptime;               ///< System uptime (seconds)
     bool wifiConnected;            ///< WiFi connected
     bool otaRunning;               ///< OTA update running
@@ -51,7 +52,7 @@ struct SystemInfo {
 
     SystemInfo() noexcept
         : firmwareVersion(""), deviceName(""),
-          freeHeap(0), minimumHeap(0), uptime(0),
+          freeHeap(0), minimumHeap(0), maxBlockHeap(0), uptime(0),
           wifiConnected(false), otaRunning(false),
           conversationRunning(false), reminderRunning(false) {}
 };

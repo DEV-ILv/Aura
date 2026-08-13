@@ -6,6 +6,7 @@
 #include "memory_manager.h"
 #include "ai_pipeline.h"
 #include "aura_system.h"
+#include "wifi_manager.h"
 
 ResilienceManager resilienceManager;
 
@@ -39,9 +40,9 @@ void ResilienceManager::Update() noexcept {
 
     // Finalize asynchronous WiFi recovery without blocking the main loop.
     if (m_wifiRecoverPending) {
-        if (WiFi.isConnected() || (now - m_wifiRecoverStarted) >= kRecoveryWindowMs) {
+        if (wifiManager.isConnected() || (now - m_wifiRecoverStarted) >= kRecoveryWindowMs) {
             m_wifiRecoverPending = false;
-            FinalizeWifiRecovery(WiFi.isConnected());
+            FinalizeWifiRecovery(wifiManager.isConnected());
         }
     }
 
@@ -144,15 +145,18 @@ bool ResilienceManager::AttemptRecovery(FailureType type) noexcept {
 bool ResilienceManager::RecoverWiFi() noexcept {
     if (m_wifiRecoverPending) {
         // A recovery window is already in progress; report current state.
-        return WiFi.isConnected();
+        return wifiManager.isConnected();
     }
     m_wifiRecoverPending = true;
     m_wifiRecoverStarted = millis();
-    WiFi.reconnect();
+    // Route through WifiManager (single radio authority) instead of calling
+    // WiFi.reconnect() directly - direct calls bypassed WifiManager's state
+    // machine and could stack begin() calls with other reconnect triggers.
+    wifiManager.reconnect();
     LOG_INFO(kLogCategory, "WiFi recovery initiated (async, %lums window)",
              kRecoveryWindowMs);
     // Non-blocking: the outcome is finalized by Update().
-    return WiFi.isConnected();
+    return wifiManager.isConnected();
 }
 
 void ResilienceManager::FinalizeWifiRecovery(bool recovered) noexcept {
@@ -205,7 +209,7 @@ bool ResilienceManager::CheckAllSystems() noexcept {
     bool allOk = true;
 
     // WiFi
-    if (!WiFi.isConnected()) {
+    if (!wifiManager.isConnected()) {
         ReportFailure(FailureType::WIFI_LOSS, "system_check");
         allOk = false;
     }

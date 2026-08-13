@@ -1,4 +1,6 @@
 #include "esp_now_manager.h"
+#include "wifi_manager.h"
+#include "error_manager.h"
 #include <esp_random.h>
 
 EspNowManager* EspNowManager::s_instance = nullptr;
@@ -6,6 +8,18 @@ EspNowManager espNowManager;
 
 extern "C" void espNowSendCb(const esp_now_send_info_t *tx_info, esp_now_send_status_t status);
 extern "C" void espNowRecvCb(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len);
+
+namespace {
+// ESP-NOW must bind its peers to whatever interface WifiManager has active.
+// Normal operation is STA; setup mode runs the SoftAP. Using WIFI_IF_AP
+// unconditionally (the old code) silently fails when the device is STA-only.
+wifi_interface_t currentEspNowInterface() noexcept {
+    if (wifiManager.isAccessPointMode()) {
+        return WIFI_IF_AP;
+    }
+    return WIFI_IF_STA;
+}
+}
 
 EspNowManager::EspNowManager() noexcept
     : m_initialized(false)
@@ -28,12 +42,20 @@ EspNowManager::~EspNowManager() noexcept {
 bool EspNowManager::initialize() noexcept {
     if (m_initialized) return true;
 
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.channel(ESPNOW_CHANNEL);
+    // ESP-NOW does NOT own the Wi-Fi radio. WifiManager is the single
+    // authority for WiFi.mode()/WiFi.channel(); the radio is already in the
+    // mode selected by WifiManager (STA, or STA for normal operation). ESP-NOW
+    // simply runs on the current radio and follows the channel WifiManager has
+    // established (see pairNode: peer channel 0 = "use current channel").
+    // We no longer force WIFI_AP_STA or ESPNOW_CHANNEL here — that was the
+    // conflicting-ownership defect that re-initialized the radio mid-boot.
 
     esp_err_t result = esp_now_init();
     if (result != ESP_OK) {
         Logger::error(kLogCategory, "ESP-NOW init failed: %d", static_cast<int>(result));
+        errorManager.report(AuraErrorSeverity::WARNING, "EspNowManager", "ESPNOW_INIT_FAIL",
+                            "ESP-NOW failed to initialize",
+                            "Mesh discovery/pairing disabled for this boot");
         return false;
     }
 
@@ -46,7 +68,8 @@ bool EspNowManager::initialize() noexcept {
     esp_now_set_pmk(const_cast<uint8_t*>(kPrimaryMasterKey));
 
     m_initialized = true;
-    Logger::info(kLogCategory, "ESP-NOW initialized (channel %d)", ESPNOW_CHANNEL);
+    Logger::info(kLogCategory, "ESP-NOW initialized (follows WifiManager channel %u)",
+                 static_cast<unsigned>(wifiManager.getChannel()));
     return true;
 }
 
@@ -106,9 +129,12 @@ bool EspNowManager::pairNode(const uint8_t* mac, EspNowNodeType type) noexcept {
     esp_now_peer_info_t peerInfo;
     memset(&peerInfo, 0, sizeof(peerInfo));
     memcpy(peerInfo.peer_addr, mac, 6);
-    peerInfo.channel = ESPNOW_CHANNEL;
+    // Channel 0 tells the ESP-NOW driver to use the channel WifiManager has
+    // established for the active interface (STA/AP), so ESP-NOW never fights
+    // the router channel and never forces ESPNOW_CHANNEL=1.
+    peerInfo.channel = 0;
     peerInfo.encrypt = true;   // encrypted link; LMK derived from PMK
-    peerInfo.ifidx = WIFI_IF_AP;
+    peerInfo.ifidx = currentEspNowInterface();
 
     esp_err_t result = esp_now_add_peer(&peerInfo);
     if (result != ESP_OK && result != ESP_ERR_ESPNOW_EXIST) {
@@ -376,9 +402,9 @@ void EspNowManager::handlePairAccept(const uint8_t* srcMac, const EspNowMessage&
     esp_now_peer_info_t peerInfo;
     memset(&peerInfo, 0, sizeof(peerInfo));
     memcpy(peerInfo.peer_addr, srcMac, 6);
-    peerInfo.channel = ESPNOW_CHANNEL;
+    peerInfo.channel = 0;       // follow the WifiManager-established channel
     peerInfo.encrypt = true;   // encrypted link; LMK derived from PMK
-    peerInfo.ifidx = WIFI_IF_AP;
+    peerInfo.ifidx = currentEspNowInterface();
     esp_now_add_peer(&peerInfo);
 
     if (eventBus.isInitialized()) {

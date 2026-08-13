@@ -118,9 +118,11 @@ constexpr const char* kCompiler     = __VERSION__;
 // accidentally fire a tap, and vice-versa. All timings are non-blocking
 // (millis()-based); see ConversationManager::processTouch().
 //
-// Recommended reference values:
-//   Debounce        50-100 ms
-//   Double-tap      350-500 ms
+// AURA BALANCED touch timing profile:
+//   Poll interval   20 ms
+//   Debounce        80 ms
+//   Tap min/max     60-450 ms
+//   Double-tap      500 ms
 //   Setup hold      5000 ms
 
 #define TOUCH_PIN              13
@@ -129,13 +131,13 @@ constexpr const char* kCompiler     = __VERSION__;
 #define TOUCH_DEBOUNCE_MS      80
 
 // Shortest press considered a real tap (shorter = electrical bounce).
-#define TAP_MIN_MS             50UL
+#define TAP_MIN_MS             60UL
 
 // Longest press still treated as a tap (longer = hold, no tap action).
-#define TAP_MAX_MS             400UL
+#define TAP_MAX_MS             450UL
 
 // Max delay between the two releases of a double-tap.
-#define DOUBLE_TAP_WINDOW_MS   400UL
+#define DOUBLE_TAP_WINDOW_MS   500UL
 
 // Continuous-hold duration that enters AURA SETUP mode.
 #define SETUP_HOLD_MS          5000UL

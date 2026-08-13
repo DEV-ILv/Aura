@@ -173,6 +173,53 @@ public:
   [[nodiscard]] WifiState getState() const noexcept;
 
   /**
+   * @brief Truthful human-readable label for the current Wi-Fi state.
+   *
+   * Reflects the actual radio condition rather than a stale/default label:
+   *   "SETUP_AP"       - Access Point active (AURA_Setup portal)
+   *   "AP_STA"         - Access Point active AND station connected
+   *   "STA_CONNECTING" - attempting to join a saved network
+   *   "STA_CONNECTED"  - station joined a network
+   *   "DISCONNECTED"   - radio up, no link
+   *   "ERROR"          - bounded-retry backoff state
+   * @return Stable C string (never null).
+   */
+  [[nodiscard]] const char* getStateString() const noexcept;
+
+  /**
+   * @brief Get the active Wi-Fi channel.
+   * @return Channel of the connected STA, the SoftAP channel while in AP mode,
+   *         or 0 when the radio is not active.
+   * @note Single-authority accessor: ESP-NOW and diagnostics must read the
+   *       channel from here instead of calling WiFi.channel() themselves.
+   */
+  [[nodiscard]] uint8_t getChannel() const noexcept;
+
+  /**
+   * @brief Get the number of connection attempts made since boot.
+   * @return Monotonic reconnect/connect attempt counter.
+   */
+  [[nodiscard]] uint16_t getReconnectCount() const noexcept;
+
+  /**
+   * @brief Get the last Wi-Fi event code observed.
+   * @return wl_status_t of the most recent Wi-Fi link event.
+   */
+  [[nodiscard]] wl_status_t getLastEvent() const noexcept;
+
+  /**
+   * @brief Get the Wi-Fi state persisted at the previous shutdown/restart.
+   * @return Persisted WifiState (byte), or DISCONNECTED when unavailable.
+   */
+  [[nodiscard]] WifiState getLastPersistedState() const noexcept;
+
+  /**
+   * @brief Get the reconnect counter persisted at the previous shutdown/restart.
+   * @return Reconnect/connect attempt count from the previous session.
+   */
+  [[nodiscard]] uint16_t getLastPersistedReconnectCount() const noexcept;
+
+  /**
    * @brief Synchronize time with NTP server
    * @param timezone Timezone offset in seconds from UTC
    * @return true if time synchronization initiated, false otherwise
@@ -243,6 +290,9 @@ private:
   bool initializeNTP(int32_t timezone) noexcept;
   void resetTimers() noexcept;
   void changeState(WifiState newState) noexcept;
+  void ensureMode(wifi_mode_t mode) noexcept;
+  void persistDiagnostics() noexcept;
+  void loadDiagnostics() noexcept;
 
   // Private member variables
   WifiState m_currentState;
@@ -261,6 +311,11 @@ private:
   bool m_mdnsStarted;                 ///< mDNS service started flag
   uint32_t m_lastConnectionCheck;     ///< Timestamp of last connection check
   uint32_t m_lastTimeSyncAttempt;     ///< Timestamp of last time sync attempt
+  uint16_t m_reconnectCount;          ///< Total connection attempts since boot
+  uint8_t m_currentChannel;           ///< Active channel (STA or SoftAP)
+  wl_status_t m_lastEvent;            ///< Last Wi-Fi link event observed
+  WifiState m_lastPersistedState;     ///< Wi-Fi state persisted at shutdown
+  uint16_t m_lastPersistedReconnect;  ///< Reconnect count persisted at shutdown
 };
 
 /**
