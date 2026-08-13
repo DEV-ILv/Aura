@@ -16,6 +16,7 @@
 #include "assistant_output.h"
 #include "wifi_manager.h"
 #include "error_manager.h"
+#include "system_manager.h"
 
 ConversationManager conversationManager;
 
@@ -78,6 +79,7 @@ ConversationManager::ConversationManager() noexcept
     , m_touchDiagLastLogMs(0)
     , m_touchLastGestureEndMs(0)
     , m_setupHoldTriggered(false)
+    , m_restartHoldTriggered(false)
     , m_lastActivityTime(0)
     , m_lastPeriodicCheckTime(0)
     , m_autoSleepActive(false)
@@ -542,6 +544,7 @@ void ConversationManager::processTouch() noexcept {
         m_touchActive = true;
         m_touchPressStart = now;
         m_setupHoldTriggered = false;
+        m_restartHoldTriggered = false;
 #if TOUCH_DIAGNOSTICS_ENABLED
         LOG_INFO("TouchDiag", "TOUCH_DOWN raw=%d trans=%lu press_at=%lu",
                  static_cast<int>(m_touchRaw),
@@ -562,6 +565,18 @@ void ConversationManager::processTouch() noexcept {
             LOG_DEBUG("ConversationManager", "SETUP_HOLD 5000ms reached");
             handleVeryLongPress();        // enter AURA SETUP (purple)
         }
+        // --- Still pressed: arm the 15-second restart hold -----------------
+        // Distinct from the setup hold: a continuous hold that reaches
+        // RESTART_HOLD_MS performs a clean SYSTEM RESTART via the existing
+        // safe mechanism (SystemManager::restart()). Guarded so it fires
+        // exactly once per qualifying hold; on release (or after the reboot)
+        // the flag resets, so another restart needs a fresh 15 s hold.
+        if (!m_restartHoldTriggered && (now - m_touchPressStart >= RESTART_HOLD_MS)) {
+            m_restartHoldTriggered = true;
+            m_doubleTapPending = false;   // a hold must never become a tap
+            LOG_DEBUG("ConversationManager", "RESTART_HOLD 15000ms reached");
+            handleRestartHold();          // clean system restart
+        }
     } else if (!touched && m_touchActive) {
         // --- Release -------------------------------------------------------
         m_touchActive = false;
@@ -577,6 +592,14 @@ void ConversationManager::processTouch() noexcept {
         // A completed 5-second setup hold has already handled the gesture.
         if (m_setupHoldTriggered) {
             m_setupHoldTriggered = false;
+            return;
+        }
+
+        // A completed 15-second restart hold has already triggered a clean
+        // restart; the release resets the guard so a later restart needs a
+        // brand-new 15 s hold (never a leftover from this one).
+        if (m_restartHoldTriggered) {
+            m_restartHoldTriggered = false;
             return;
         }
 
@@ -682,6 +705,16 @@ void ConversationManager::handleVeryLongPress() noexcept {
     LOG_INFO("TouchDiag", "GESTURE: SETUP HOLD");
 #endif
     enterSetupMode();   // 5s continuous hold — AURA SETUP
+}
+
+void ConversationManager::handleRestartHold() noexcept {
+    m_lastTouchEvent = "restart_hold";
+#if TOUCH_DIAGNOSTICS_ENABLED
+    LOG_INFO("TouchDiag", "GESTURE: RESTART HOLD");
+#endif
+    // 15s continuous hold — clean SYSTEM RESTART via the existing safe
+    // mechanism (shows "Restarting..." and calls ESP.restart()).
+    systemManager.restart();
 }
 
 // ============================================================================

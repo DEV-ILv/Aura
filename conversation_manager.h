@@ -468,6 +468,7 @@ private:
 void handleTap() noexcept;
 void handleDoubleTap() noexcept;
 void handleVeryLongPress() noexcept;
+void handleRestartHold() noexcept;
     void handleQuickCommand(const String& transcript) noexcept;
     void checkAutoSleep() noexcept;
     void checkContextReminder() noexcept;
@@ -522,8 +523,8 @@ void handleVeryLongPress() noexcept;
     String m_lastWakeSource;
     String m_lastTouchEvent;
 
-    // Touch gesture handling — exactly three gestures, spec-driven:
-    // single tap / double tap / 5-second setup hold.
+    // Touch gesture handling — exactly four gestures, spec-driven:
+    // single tap / double tap / 5-second setup hold / 15-second restart hold.
     bool m_touchActive;
     bool m_touchLastRaw;
     unsigned long m_touchDebounceStart;
@@ -545,6 +546,11 @@ void handleVeryLongPress() noexcept;
     // never fires a tap/double-tap as well. Guards enterSetupMode() from
     // being triggered twice (the very-long-press toggle trap).
     bool m_setupHoldTriggered;
+
+    // Set the moment a continuous hold passes RESTART_HOLD_MS so the release
+    // never fires a tap/double-tap and a finger kept down after the restart
+    // can never re-trigger it within the same boot. Cleared on press/release.
+    bool m_restartHoldTriggered;
 
     // Notification queue
     std::vector<String> m_notificationQueue;

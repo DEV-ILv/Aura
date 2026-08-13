@@ -4,7 +4,41 @@ All notable changes to AURA OS are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 AURA OS is currently at version `1.0.0` (Mark III "Phoenix"), Development channel.
-Current build metrics: 62% flash (1,979,307 / 3,145,728 B) · 33% RAM (108,384 / 327,680 B) · 0 warnings in AURA code.
+Current build metrics: 63% flash (1,997,499 / 3,145,728 B) · 33% RAM (108,520 / 327,680 B) · 0 warnings in AURA code.
+
+## [Unreleased] — 15-Second Touch Restart Gesture
+
+Adds a fourth, distinct touch gesture: a continuous **15-second hold performs a
+clean SYSTEM RESTART** via the existing safe restart mechanism, giving a no-tools
+way to recover the device when the web portal or app are unreachable.
+
+### Added
+
+- **`RESTART_HOLD_MS` (15000 ms)** in `config.h` — a new touch timing constant
+  alongside the unchanged `SETUP_HOLD_MS` (5000 ms), tap (60–450 ms),
+  double-tap (500 ms), debounce (80 ms), and poll (20 ms) values.
+- **`ConversationManager::handleRestartHold()`** — arms inside the press the
+  moment a hold reaches 15 s and calls the existing safe
+  `SystemManager::restart()` ("Restarting…" + `ESP.restart()`).
+- **`m_restartHoldTriggered` guard** — fires the restart **exactly once** per
+  qualifying hold; reset on press and on release, so a finger kept down after
+  the reboot never re-triggers it and another restart requires a fresh 15 s hold.
+
+### Changed
+
+- **Gesture grammar is now four gestures**: SINGLE TAP (mic on), DOUBLE TAP
+  (cancel + idle), 5 s HOLD (setup), 15 s HOLD (system restart). A single 15 s
+  hold passes through the 5 s setup trigger first; priority on a press is
+  **restart (15 s) > setup (5 s) > double tap > single tap**.
+- `processTouch()` still-pressed branch now checks both the 5 s setup hold and
+  the 15 s restart hold, each independently guarded against the eventual release
+  dispatching a tap/double-tap.
+
+### Docs
+
+- Docset updated with the four-gesture table and restart-by-touch:
+  `AURA_Instruction_Manual.md` (§4.4 restart, §5 gesture grammar/context, §24
+  FAQ), `AURA_QUICK_START.md` (gesture summary), and `config.h` touch block.
 
 ## [Unreleased] — Final LED Status System (solid-colour per state)
 

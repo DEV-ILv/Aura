@@ -50,6 +50,7 @@ Getting started with AURA takes about one minute. Follow the steps in order.
 | **Tap once** | Start talking (microphone on) |
 | **Tap twice** | Stop / cancel; return to idle |
 | **Hold 5 s** | Enter (or exit) Setup Mode |
+| **Hold 15 s** | Clean system restart (passes through setup at 5 s) |
 
 ## Not available on this build
 

@@ -88,7 +88,7 @@ the companion app.
 
 | Capability | Status | Notes |
 |---|---|---|
-| Touch interaction (single tap, double tap, 5 s hold) | **Ready** | See §5 |
+| Touch interaction (single tap, double tap, 5 s hold, 15 s restart hold) | **Ready** | See §5 |
 | Microphone capture (INMP441, I2S, 16 kHz) | **Ready** | See §6 |
 | Voice wake word (always-listening mic) | **Not currently available** | Wake-word code exists but is not wired; touch (push-to-talk) is the only input |
 | Speech-to-Text (Sarvam AI, cloud) | **Requires configuration** | Needs a Sarvam API key and TLS root CA in `secrets.h` (empty by default) |
@@ -183,6 +183,10 @@ reboot loops.
 ESP32 firmware has no software power-off; to power off simply remove power. To
 restart without unplugging:
 
+- **Touch:** hold the touch pad for **15 seconds** (continuous) — a clean system
+  restart. The 15 s hold first enters Setup Mode at 5 s and restarts at 15 s;
+  it fires exactly once per hold and a finger kept down after the restart never
+  re-triggers it.
 - **Web portal:** Restart button (or `POST /api/restart`).
 - **Companion app:** Control → Restart device.
 
@@ -210,9 +214,13 @@ distinguishable.
 | **Single tap** | pressed ~50–400 ms, released; no second tap within 400 ms | Start a conversation — microphone ON (listening) |
 | **Double tap** | two taps, second within 400 ms | Cancel / stop the active interaction → return to idle |
 | **5-second hold** | press held 5000 ms without release | Enter Setup Mode (§14) — highest priority |
+| **15-second hold** | press held 15000 ms without release | Clean **system restart** (§4) — triggers only after a further 10 s past setup |
 | Any other hold (>400 ms but <5 s) | press then release | **Ignored** — deliberately nothing |
 
-Priority on a single press: **5 s hold > double tap > single tap**.
+Priority on a single press: **15 s hold (restart) > 5 s hold (setup) > double tap > single tap**.
+A single 15 s hold passes through the 5 s setup trigger first, then restarts at
+15 s; the restart is guarded so it fires **exactly once** per qualifying hold and
+a finger kept down after the restart never re-triggers it.
 
 ### 5.2 Behaviour in context
 
@@ -224,9 +232,11 @@ Priority on a single press: **5 s hold > double tap > single tap**.
 - **Setup mode:** gestures are disabled except a further 5 s hold, which exits
   setup.
 - **Auto-sleep:** any touch wakes AURA; a 5 s hold goes straight into setup.
+- **Restart hold:** a continuous 15 s hold always restarts AURA cleanly — even
+  from Setup mode (which is entered at 5 s and simply overridden at 15 s).
 
-In short, **"tap once to talk, tap twice to stop, hold five seconds for setup".**
-There is no wake-word.
+In short, **"tap once to talk, tap twice to stop, hold five seconds for setup,
+hold fifteen seconds to restart".** There is no wake-word.
 
 ## 6. Microphone Guide
 
@@ -756,27 +766,29 @@ crashes).
 5. **What does a solid magenta LED mean?** Muted / privacy. Solid red means an
    error (or warning).
 6. **How do I enter setup?** Hold the touch pad for 5 seconds.
-7. **Does AURA need Wi-Fi?** For cloud features and NTP yes; the local AI works
+7. **How do I restart AURA?** Hold the touch pad for 15 seconds (continuous), or
+   use the web portal Restart button or the companion app Control → Restart.
+8. **Does AURA need Wi-Fi?** For cloud features and NTP yes; the local AI works
    offline.
-8. **Can AURA work without the cloud?** Yes — offline Local AI engine.
-9. **What happens if STT fails?** It fails closed; the touch sensor is not broken.
-10. **How do I use Disco Mode?** App → Tools → Disco Mode.
-11. **How do I update AURA?** App → Tools → Firmware, or the portal `/ota`.
-12. **How do I connect the app?** Same network + device login, or cloud sign-in.
-13. **Why is the microphone not responding?** Check mute/privacy (LED magenta) and try
+9. **Can AURA work without the cloud?** Yes — offline Local AI engine.
+10. **What happens if STT fails?** It fails closed; the touch sensor is not broken.
+11. **How do I use Disco Mode?** App → Tools → Disco Mode.
+12. **How do I update AURA?** App → Tools → Firmware, or the portal `/ota`.
+13. **How do I connect the app?** Same network + device login, or cloud sign-in.
+14. **Why is the microphone not responding?** Check mute/privacy (LED magenta) and try
     a single tap.
-14. **Why is the OLED blank?** Check wiring/address; use the serial console.
-15. **What does the mic icon mean?** Idle, listening, or muted.
-16. **My Wi-Fi changed — what do I do?** Re-enter via setup (5 s hold).
-17. **Where is my data stored?** On-chip SPIFFS; SD if mounted.
-18. **What does factory reset do?** Erases settings, memories, Wi-Fi.
-19. **Are notifications real-time?** No — local notifications while the app runs.
-20. **Do I need the SD card?** No — SPIFFS always works; SD is optional.
-21. **What is Safe Mode?** Recovery state after repeated crashes.
-22. **When do I see the clock?** When idle and NTP-synced (IST).
-23. **Can I control LED brightness?** Yes — Control + settings.
-24. **Can I read logs?** Portal log viewer / developer export.
-25. **Is the mic always on?** No — push-to-talk by touch is the default.
+15. **Why is the OLED blank?** Check wiring/address; use the serial console.
+16. **What does the mic icon mean?** Idle, listening, or muted.
+17. **My Wi-Fi changed — what do I do?** Re-enter via setup (5 s hold).
+18. **Where is my data stored?** On-chip SPIFFS; SD if mounted.
+19. **What does factory reset do?** Erases settings, memories, Wi-Fi.
+20. **Are notifications real-time?** No — local notifications while the app runs.
+21. **Do I need the SD card?** No — SPIFFS always works; SD is optional.
+22. **What is Safe Mode?** Recovery state after repeated crashes.
+23. **When do I see the clock?** When idle and NTP-synced (IST).
+24. **Can I control LED brightness?** Yes — Control + settings.
+25. **Can I read logs?** Portal log viewer / developer export.
+26. **Is the mic always on?** No — push-to-talk by touch is the default.
 
 ---
 

@@ -109,14 +109,15 @@ constexpr const char* kCompiler     = __VERSION__;
 // TOUCH SENSOR
 //======================================================
 //
-// Interaction model (exactly three gestures, final interaction spec):
+// Interaction model (exactly four gestures, final interaction spec):
 //   SINGLE TAP   -> microphone ON, listening
 //   DOUBLE TAP   -> microphone OFF, cancel voice interaction, IDLE
 //   5s HOLD      -> AURA SETUP mode (highest gesture priority)
+//   15s HOLD     -> SYSTEM RESTART (armed only after 5s setup hold)
 //
-// Priority: 5s hold > double tap > single tap. A hold must never
-// accidentally fire a tap, and vice-versa. All timings are non-blocking
-// (millis()-based); see ConversationManager::processTouch().
+// Priority: 15s hold (restart) > 5s hold (setup) > double tap > single tap.
+// A hold must never accidentally fire a tap, and vice-versa. All timings are
+// non-blocking (millis()-based); see ConversationManager::processTouch().
 //
 // AURA BALANCED touch timing profile:
 //   Poll interval   20 ms
@@ -124,6 +125,7 @@ constexpr const char* kCompiler     = __VERSION__;
 //   Tap min/max     60-450 ms
 //   Double-tap      500 ms
 //   Setup hold      5000 ms
+//   Restart hold    15000 ms
 
 #define TOUCH_PIN              13
 
@@ -141,6 +143,12 @@ constexpr const char* kCompiler     = __VERSION__;
 
 // Continuous-hold duration that enters AURA SETUP mode.
 #define SETUP_HOLD_MS          5000UL
+
+// Continuous-hold duration that triggers a clean SYSTEM RESTART. Distinct from
+// SETUP_HOLD_MS; a single 15 s hold passes through setup first. Guarded by
+// m_restartHoldTriggered so it fires exactly once per qualifying hold and a
+// finger kept down after the restart never re-triggers on this boot.
+#define RESTART_HOLD_MS        15000UL
 
 // Touch polling cadence (resulted in the main conversation loop).
 #define TOUCH_POLL_INTERVAL_MS 20UL

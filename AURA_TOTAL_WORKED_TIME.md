@@ -108,6 +108,11 @@ sessions and uploaded to GitHub on 07-31.
 | 08-10 | Flood probe + touch/boot captures | 1h 15m |
 | 08-11 | Security hardening doc + GitHub publish prep | 1h 30m |
 
+### 15-second touch restart gesture (2026-08-13) — Evidence-backed
+| Date | Activity | Est. |
+|---|---|---|
+| 08-13 | 15s touch restart gesture: `RESTART_HOLD_MS`, `handleRestartHold()` → `SystemManager::restart()`, `m_restartHoldTriggered` guard; docs (Instruction Manual §4.4/§5/§24, Quick Start, CHANGELOG) + config.h touch block | 0h 40m |
+
 ### Hardware integration (inferred) — AI-reconstructed
 | Period | Activity | Est. |
 |---|---|---|

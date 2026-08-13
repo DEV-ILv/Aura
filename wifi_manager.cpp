@@ -346,9 +346,8 @@ bool WifiManager::hasCredentials() const noexcept {
  * @brief Get current connected SSID
  */
 const char* WifiManager::getSSID() const noexcept {
-  if (isConnected()) {
-    return WiFi.SSID().c_str();
-  }
+  // WiFi.SSID() returns a temporary String; .c_str() on it would dangle.
+  // m_ssid holds the currently connected/configured SSID, which is stable.
   return m_ssid;
 }
 
