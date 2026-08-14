@@ -404,7 +404,7 @@ fully active.
 ## [1.0.0] — Mark III "Phoenix" (baseline)
 
 Initial published development firmware. Feature baseline, hardware config, and
-architecture described in `AURA_ARCHITECTURE.md` and `README.md`.
+architecture described in `docs/ARCHITECTURE.md` and `README.md`.
 
 ### Features (baseline)
 

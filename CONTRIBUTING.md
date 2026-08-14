@@ -239,6 +239,15 @@ See `aura_companion/.env.example` for the full list.
 
 ---
 
+## AI-Assisted Development
+
+This project is developed with heavy use of AI coding assistants (e.g.
+ChatGPT, OpenCode, Gemini). The bulk of the firmware and companion code was
+generated with AI assistance; hardware wiring, testing, flashing, and
+validation are human-led. Contributions may likewise use AI tools, but please
+follow the same standards as any other contribution — review the output,
+keep the codebase consistent, and never introduce secrets.
+
 ## Code of Conduct
 
 Be respectful and constructive. Harassment, trolling, and abuse will result in
