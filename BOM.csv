@@ -1,12 +1,12 @@
 Category,Manufacturer,Part Number,Component,Qty,Approx Price (INR),Required,Supplier,Purpose
 Main Controller,Espressif,ESP32-P4,ESP32-P4 Development Board,1,1600,Yes,TBD,Main high-performance controller
-Connectivity,Espressif,ESP32-CAM,ESP32-CAM (camera-capable controller),1,TBD,Yes,TBD,Camera-capable controller (planned)
+Connectivity,Espressif,ESP32-CAM,ESP32-CAM (camera-capable controller),1,600,Yes,TBD,Camera-capable controller (planned)
 Display,Waveshare,5.0-inch IPS Capacitive,800x480 Touch Display,1,4499,Yes,Waveshare,Primary user interface
 Audio,TDK InvenSense,INMP441,I2S MEMS Microphone,1,250,Yes,Amazon,Voice input
 Audio,Analog Devices,MAX98357A,I2S Audio Amplifier,1,220,Yes,Amazon,Speaker amplifier
 Audio,Visaton,FRS7 4Ω 10W,Premium Full-Range Speaker,1,950,Yes,Mouser,Voice output
 Lighting,WorldSemi,WS2812B 16 LED Ring,RGB LED Ring,1,420,Yes,Amazon,Status indication / Disco Mode
-Storage,Digitek,DTF 32GB C40,microSD Card (microSDHC),1,TBD,Yes,TBD,Audio assets and storage
+Storage,Digitek,DTF 32GB C40,microSD Card (microSDHC),1,800,Yes,TBD,Audio assets and storage
 Storage,Generic,SPI SD Module,MicroSD Card Interface Module,1,150,Yes,Amazon,SD interface
 Input,Tontek,TTP223,Capacitive Touch Sensor,1,80,Yes,Amazon,Touch wake/control
 Sensors,Bosch,BME280,Temperature Humidity Pressure Sensor,1,380,Yes,Robu,Environmental monitoring
@@ -16,7 +16,6 @@ Sensors,STMicroelectronics,VL53L0X,Time-of-Flight Distance Sensor,1,450,Yes,Robu
 Position,u-blox,NEO-6M,GPS Module,1,650,Yes,Amazon,Location services
 Time,Maxim Integrated,DS3231,RTC Module,1,250,Yes,Amazon,Real-time clock
 Connectivity,NXP,PN532,NFC Module,1,950,Yes,Mouser,NFC communication
-Camera,Arducam,OV5640,5MP Camera Module,1,1850,Yes,Arducam,Vision features
 Power,Samsung,INR21700-50E,5000mAh Li-ion Battery,1,850,Yes,Robu,Portable power
 Power,Texas Instruments,BQ24074,USB-C Battery Charger Module,1,620,Yes,Mouser,Battery charging
 Power,Texas Instruments,TPS63070,Buck-Boost Regulator,1,780,Yes,Mouser,Stable power supply

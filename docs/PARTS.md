@@ -36,13 +36,13 @@ See [HARDWARE.md](HARDWARE.md) for interface details and
 | # | Category | Component | Part number | Qty | Approx price (INR) | Supplier | Purpose |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Main Controller | ESP32-P4 Development Board | ESP32-P4 | 1 | 1600 | TBD | Main high-performance controller |
-| 2 | Connectivity | ESP32-CAM (camera-capable controller) | ESP32-CAM | 1 | TBD | TBD | Camera-capable controller (planned) |
+| 2 | Connectivity | ESP32-CAM (camera-capable controller) | ESP32-CAM | 1 | 600 | TBD | Camera-capable controller (planned) |
 | 3 | Display | 5.0" IPS Capacitive Touch Display | 800×480 | 1 | 4499 | Waveshare | Primary user interface |
 | 4 | Audio | I2S MEMS Microphone | INMP441 | 1 | 250 | Amazon | Voice input |
 | 5 | Audio | I2S Audio Amplifier | MAX98357A | 1 | 220 | Amazon | Speaker amplifier |
 | 6 | Audio | Premium Full-Range Speaker | FRS7 4 Ω 10 W | 1 | 950 | Mouser | Voice output |
 | 7 | Lighting | RGB LED Ring | WS2812B 16 LED | 1 | 420 | Amazon | Status indication / Disco Mode |
-| 8 | Storage | 32 GB microSD Card (microSDHC) | Digitek DTF 32GB C40 | 1 | TBD | TBD | Audio assets and storage |
+| 8 | Storage | 32 GB microSD Card (microSDHC) | Digitek DTF 32GB C40 | 1 | 800 | TBD | Audio assets and storage |
 | 9 | Storage | MicroSD Card Interface Module | SPI SD Module | 1 | 150 | Amazon | SD interface |
 | 10 | Input | Capacitive Touch Sensor | TTP223 | 1 | 80 | Amazon | Touch wake/control |
 | 11 | Sensors | Temperature/Humidity/Pressure | BME280 | 1 | 380 | Robu | Environmental monitoring |
@@ -52,16 +52,15 @@ See [HARDWARE.md](HARDWARE.md) for interface details and
 | 15 | Position | GPS Module | NEO-6M | 1 | 650 | Amazon | Location services |
 | 16 | Time | RTC Module | DS3231 | 1 | 250 | Amazon | Real-time clock |
 | 17 | Connectivity | NFC Module | PN532 | 1 | 950 | Mouser | NFC communication |
-| 18 | Camera | 5 MP Camera Module | OV5640 | 1 | 1850 | Arducam | Vision features |
-| 19 | Power | 5000 mAh Li-ion Battery | INR21700-50E | 1 | 850 | Robu | Portable power |
-| 20 | Power | USB-C Battery Charger Module | BQ24074 | 1 | 620 | Mouser | Battery charging |
-| 21 | Power | Buck-Boost Regulator | TPS63070 | 1 | 780 | Mouser | Stable power supply |
-| 22 | Power | USB-C Power Connector | USB-C Breakout | 1 | 120 | Amazon | Power input |
-| 23 | Mechanical | 3D Printed Enclosure | Production Prototype Case | 1 | 1800 | Local | Protective enclosure |
-| 24 | Mechanical | Screws and Standoffs | M2 Screw Kit | 1 | 300 | Amazon | Assembly |
-| 25 | Mechanical | Connectors | PH2.0 Connector Kit | 1 | 450 | Amazon | Power and signal connections |
-| 26 | Accessories | Programming and Power Cable | USB-C Cable | 1 | 250 | Amazon | Programming and power |
-| 27 | Accessories | Card Reader | MicroSD Adapter | 1 | 80 | Amazon | PC data transfer |
+| 18 | Power | 5000 mAh Li-ion Battery | INR21700-50E | 1 | 850 | Robu | Portable power |
+| 19 | Power | USB-C Battery Charger Module | BQ24074 | 1 | 620 | Mouser | Battery charging |
+| 20 | Power | Buck-Boost Regulator | TPS63070 | 1 | 780 | Mouser | Stable power supply |
+| 21 | Power | USB-C Power Connector | USB-C Breakout | 1 | 120 | Amazon | Power input |
+| 22 | Mechanical | 3D Printed Enclosure | Production Prototype Case | 1 | 1800 | Local | Protective enclosure |
+| 23 | Mechanical | Screws and Standoffs | M2 Screw Kit | 1 | 300 | Amazon | Assembly |
+| 24 | Mechanical | Connectors | PH2.0 Connector Kit | 1 | 450 | Amazon | Power and signal connections |
+| 25 | Accessories | Programming and Power Cable | USB-C Cable | 1 | 250 | Amazon | Programming and power |
+| 26 | Accessories | Card Reader | MicroSD Adapter | 1 | 80 | Amazon | PC data transfer |
 
 > All V2 components are **planned only**. The current firmware supports none of
 > them (see [HARDWARE.md](HARDWARE.md) → "Planned (V2)").
