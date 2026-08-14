@@ -19,6 +19,6 @@ The first working prototype is built around an **ESP32-WROOM** with components i
 * LED ring
 * Environmental sensors
 
-The ESP32 was my starting point and helped me get the basic idea working. It works, but I’ve reached the point where I need more powerful hardware for the system I have in mind.
+The ESP32 wroom was my starting point and helped me get the basic idea working. It works, but I’ve reached the point where I need more powerful hardware for the system I have in mind.
 
 **AURA is still a work in progress.** This repository is the beginning of that system.
