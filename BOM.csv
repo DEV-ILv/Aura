@@ -1,12 +1,12 @@
 Category,Manufacturer,Part Number,Component,Qty,Approx Price (INR),Required,Supplier,Purpose
 Main Controller,Espressif,ESP32-P4,ESP32-P4 Development Board,1,1600,Yes,TBD,Main high-performance controller
-Connectivity,Espressif,ESP32-C6,ESP32-C6 Wi-Fi/BLE Module/DevKit,1,600,Yes,TBD,Wi-Fi 6 + Bluetooth LE connectivity for P4
+Connectivity,Espressif,ESP32-CAM,ESP32-CAM (camera-capable controller),1,TBD,Yes,TBD,Camera-capable controller (planned)
 Display,Waveshare,5.0-inch IPS Capacitive,800x480 Touch Display,1,4499,Yes,Waveshare,Primary user interface
 Audio,TDK InvenSense,INMP441,I2S MEMS Microphone,1,250,Yes,Amazon,Voice input
 Audio,Analog Devices,MAX98357A,I2S Audio Amplifier,1,220,Yes,Amazon,Speaker amplifier
 Audio,Visaton,FRS7 4Ω 10W,Premium Full-Range Speaker,1,950,Yes,Mouser,Voice output
 Lighting,WorldSemi,WS2812B 16 LED Ring,RGB LED Ring,1,420,Yes,Amazon,Status indication / Disco Mode
-Storage,Kingston,Canvas Select Plus 32GB,microSD Card,1,420,Yes,Amazon,Audio assets and storage
+Storage,Digitek,DTF 32GB C40,microSD Card (microSDHC),1,TBD,Yes,TBD,Audio assets and storage
 Storage,Generic,SPI SD Module,MicroSD Card Interface Module,1,150,Yes,Amazon,SD interface
 Input,Tontek,TTP223,Capacitive Touch Sensor,1,80,Yes,Amazon,Touch wake/control
 Sensors,Bosch,BME280,Temperature Humidity Pressure Sensor,1,380,Yes,Robu,Environmental monitoring

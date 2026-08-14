@@ -36,13 +36,13 @@ See [HARDWARE.md](HARDWARE.md) for interface details and
 | # | Category | Component | Part number | Qty | Approx price (INR) | Supplier | Purpose |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Main Controller | ESP32-P4 Development Board | ESP32-P4 | 1 | 1600 | TBD | Main high-performance controller |
-| 2 | Connectivity | ESP32-C6 Wi-Fi/BLE Module | ESP32-C6 | 1 | 600 | TBD | Wi-Fi 6 + Bluetooth LE connectivity for P4 |
+| 2 | Connectivity | ESP32-CAM (camera-capable controller) | ESP32-CAM | 1 | TBD | TBD | Camera-capable controller (planned) |
 | 3 | Display | 5.0" IPS Capacitive Touch Display | 800×480 | 1 | 4499 | Waveshare | Primary user interface |
 | 4 | Audio | I2S MEMS Microphone | INMP441 | 1 | 250 | Amazon | Voice input |
 | 5 | Audio | I2S Audio Amplifier | MAX98357A | 1 | 220 | Amazon | Speaker amplifier |
 | 6 | Audio | Premium Full-Range Speaker | FRS7 4 Ω 10 W | 1 | 950 | Mouser | Voice output |
 | 7 | Lighting | RGB LED Ring | WS2812B 16 LED | 1 | 420 | Amazon | Status indication / Disco Mode |
-| 8 | Storage | 32 GB microSD Card | Canvas Select Plus 32GB | 1 | 420 | Amazon | Audio assets and storage |
+| 8 | Storage | 32 GB microSD Card (microSDHC) | Digitek DTF 32GB C40 | 1 | TBD | TBD | Audio assets and storage |
 | 9 | Storage | MicroSD Card Interface Module | SPI SD Module | 1 | 150 | Amazon | SD interface |
 | 10 | Input | Capacitive Touch Sensor | TTP223 | 1 | 80 | Amazon | Touch wake/control |
 | 11 | Sensors | Temperature/Humidity/Pressure | BME280 | 1 | 380 | Robu | Environmental monitoring |

@@ -5,7 +5,7 @@ This document describes the hardware for **AURA OS** at two levels:
 1. **Current prototype (V1, MK-II)** — the hardware actually supported and
    tested by the current firmware build (ESP32-WROOM-32).
 2. **Planned (V2)** — the next-generation hardware bill of materials
-   (ESP32-P4 + ESP32-C6) as listed in `BOM.csv`. None of the V2 components
+   (ESP32-P4 + ESP32-CAM) as listed in `BOM.csv`. None of the V2 components
    have firmware support in the current build.
 
 Wiring and pinout live in [WIRING.md](WIRING.md); the full parts list lives in
@@ -57,10 +57,17 @@ hardware is present). See `README.md` → "Headless development mode".
 
 The V2 hardware is **planned only** (target design sourced from `BOM.csv`);
 no V2 component is implemented in the current firmware. The V2 design moves
-to an **ESP32-P4** main controller paired with an **ESP32-C6** Wi-Fi/BLE
-module, adds a 5.0" IPS capacitive touch display, sensors (BME280, BH1750,
-BMI270, VL53L0X), GPS, RTC, NFC, camera, and battery power — all beyond the
-scope of the current build.
+to an **ESP32-P4** main controller paired with an **ESP32-CAM** as the
+planned camera-capable controller, adds a 5.0" IPS capacitive touch display,
+sensors (BME280, BH1750, BMI270, VL53L0X), GPS, RTC, NFC, and battery power —
+all beyond the scope of the current build. The ESP32-CAM has **not** been
+purchased or tested; no camera sensor, pinout, or model is specified.
+
+### Hardware progression
+
+- **ESP32-WROOM-32** — current/prototype hardware used for testing (concept
+  proven; see "Current prototype (V1)" above).
+- **ESP32-CAM** — planned camera-capable hardware (not yet purchased/tested).
 
 See [PARTS.md](PARTS.md) for the full parts list and [WIRING.md](WIRING.md)
 for the verified current-wiring pinout.
