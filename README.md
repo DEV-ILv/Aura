@@ -6,6 +6,8 @@ The idea is simple: **AURA is a communicator between me and AI.** It can connect
 
 AURA is something I’m building to experiment with my own AI setup and the hardware and software that go with it. I want to be able to switch between different AI models depending on what I need, including cloud and local models.
 
+[📖 Development Journal](journal.md)
+
 ### Hardware
 
 The first working prototype is built around an **ESP32-WROOM** with components including:
