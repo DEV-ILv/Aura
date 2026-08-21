@@ -155,7 +155,7 @@ Firmware updates are authenticated end-to-end:
   signature is logged as a warning; an invalid signature aborts the update
   with `400` and an audit event.
 
-See [`docs/ota-signing.md`](docs/ota-signing.md) for key generation, signing,
+See [`docs/development/ota-signing.md`](docs/development/ota-signing.md) for key generation, signing,
 verification, rotation, and CI workflows.
 
 ---

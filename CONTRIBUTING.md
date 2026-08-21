@@ -209,7 +209,7 @@ Expected baseline (V1.0.0): ~61% flash (1,939,775 / 3,145,728 B) and ~24% RAM
 
 ### Signing an OTA image
 
-See [`docs/ota-signing.md`](docs/ota-signing.md) for key generation and
+See [`docs/development/ota-signing.md`](docs/development/ota-signing.md) for key generation and
 signing steps, including the Windows PowerShell and Python tooling.
 
 ---

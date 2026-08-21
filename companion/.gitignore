@@ -1,0 +1,69 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# Secrets / environment files — never commit
+.env
+.env.*
+*.env
+!.env.example
+service_account.json
+credentials/
+secrets/
+
+# Private key / signing material
+*.pem
+*.key
+*.jks
+*.keystore
+key.properties
+
+# Build artifacts / release packages
+release/
+*.apk
+*.aab
+
+# Visual Studio build tooling
+.vs/
+nuget.exe
+*.nupkg
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code workspace configuration is intended to be tracked.
+.vscode/*.log
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release

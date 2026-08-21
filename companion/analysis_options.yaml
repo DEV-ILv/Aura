@@ -1,0 +1,26 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    avoid_print: warning
+  exclude:
+    - "**/*.g.dart"
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_empty_else
+    - avoid_print
+    - avoid_redundant_argument_values
+    - avoid_unused_constructor_parameters
+    - cancel_subscriptions
+    - close_sinks
+    - directives_ordering
+    - prefer_const_constructors
+    - prefer_const_declarations
+    - prefer_final_fields
+    - prefer_final_locals
+    - prefer_single_quotes
+    - sort_child_properties_last
+    - unawaited_futures
+    - unnecessary_brace_in_string_interps

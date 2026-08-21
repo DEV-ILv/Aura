@@ -97,7 +97,7 @@ the companion app.
 | Gemini reasoning (cloud) | **Not currently available** | Model constant exists but the API endpoint is not wired in this build; the offline engine is used |
 | Offline Local AI Engine | **Ready** | Fully offline, always available |
 | Startup greeting | **Ready** | Configurable, ~4 s display |
-| OLED display (SH1106, 128×64) | **Ready** | Face, clock, states |
+| OLED display (SSD1306, 128×64) | **Ready** | Face, clock, states |
 | LED status ring (WS2812B, 16 LEDs) | **Ready** | See §8 |
 | Disco Mode (party lights) | **Ready (app-only)** | Fully separate from status; see §8 |
 | Privacy / mic mute | **Ready** | App + OLED + magenta ring |
@@ -121,7 +121,7 @@ verified from `config.h`.
 | Component | Function | Connection / pins | User-visible purpose |
 |---|---|---|---|
 | ESP32-WROOM-32 (38-pin) | Main MCU (Wi-Fi + BLE) | — | All processing and wireless |
-| SH1106 OLED, 128×64 px | Display | I2C SDA=GPIO21, SCL=GPIO22, addr 0x3C | Face, clock, states |
+| SSD1306 OLED, 128×64 px | Display | I2C SDA=GPIO21, SCL=GPIO22, addr 0x3C | Face, clock, states |
 | INMP441 I2S MEMS microphone | Voice input | BCLK=GPIO26, WS=GPIO25, DATA=GPIO34 | Captures your speech |
 | MAX98357A I2S amp + speaker | Voice output | BCLK=GPIO27, LRC=GPIO14, DATA=GPIO12 | Speaks replies (hardware-dependent) |
 | WS2812B 16-LED ring | Status lights | WS2812 on GPIO4 | Solid status colours |
@@ -297,7 +297,7 @@ always check the LED and OLED to separate a touch failure from an STT failure
 
 ## 7. OLED Display Guide
 
-The display is a **128×64 monochrome SH1106**. Colour is conveyed through the LED
+The display is a **128×64 monochrome SSD1306**. Colour is conveyed through the LED
 ring, not the screen.
 
 ### 7.1 User-visible states

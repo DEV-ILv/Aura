@@ -8,16 +8,16 @@ point and gives a full project overview.
 
 | Document | Purpose |
 | --- | --- |
-| [HARDWARE.md](HARDWARE.md) | Hardware overview — current prototype vs planned (V2) hardware |
-| [PARTS.md](PARTS.md) | Parts & BOM — current prototype parts and the planned V2 bill of materials |
-| [WIRING.md](WIRING.md) | Verified wiring & pinout (mic, speaker, OLED, LED ring, touch, SD) |
-| [SOFTWARE.md](SOFTWARE.md) | Software stack — firmware, web portal, companion app, AI providers, build tooling |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture analysis (lifecycle, modules, data flow, known gaps) |
-| [ota-signing.md](ota-signing.md) | OTA key generation, signing, verification, rotation, CI |
-| [sarvam_ai.md](sarvam_ai.md) | Sarvam AI STT/TTS integration architecture & readiness |
-| [aura-led-state-machine.md](aura-led-state-machine.md) | LED ring status system (solid-colour per state) and manual control |
-| [companion-output.md](companion-output.md) | Companion app — assistant-response WebSocket spec |
-| [companion-v2-device-control.md](companion-v2-device-control.md) | Companion V2 Device Control centre (endpoints, status) |
+| [architecture/HARDWARE.md](architecture/HARDWARE.md) | Hardware overview — current prototype vs planned (V2) hardware |
+| [architecture/SOFTWARE.md](architecture/SOFTWARE.md) | Software stack — firmware, web portal, companion app, AI providers, build tooling |
+| [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) | System architecture analysis (lifecycle, modules, data flow, known gaps) |
+| [architecture/sarvam_ai.md](architecture/sarvam_ai.md) | Sarvam AI STT/TTS integration architecture & readiness |
+| [architecture/aura-led-state-machine.md](architecture/aura-led-state-machine.md) | LED ring status system (solid-colour per state) and manual control |
+| [development/ota-signing.md](development/ota-signing.md) | OTA key generation, signing, verification, rotation, CI |
+| [development/companion-output.md](development/companion-output.md) | Companion app — assistant-response WebSocket spec |
+| [development/companion-v2-device-control.md](development/companion-v2-device-control.md) | Companion V2 Device Control centre (endpoints, status) |
+| [testing/WIRING.md](testing/WIRING.md) | Verified wiring & pinout (mic, speaker, OLED, LED ring, touch, SD) |
+| [development/PARTS.md](development/PARTS.md) | Parts & BOM — current prototype parts and the planned V2 bill of materials |
 
 ## Related documents (kept at repo root)
 
@@ -29,12 +29,12 @@ point and gives a full project overview.
 | [`../SECURITY.md`](../SECURITY.md) | Security policy, reporting, hardening overview |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Setup, coding standards, contribution workflow |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Release history (canonical changelog) |
-| [`../BOM.csv`](../BOM.csv) | Planned V2 bill of materials (machine-readable; see [PARTS.md](PARTS.md)) |
-| [`../journal.csv`](../journal.csv) | Development work log (evidence-backed) |
+| [`../hardware/BOM.csv`](../hardware/BOM.csv) | Planned V2 bill of materials (machine-readable; see [development/PARTS.md](development/PARTS.md)) |
+| [`../companion/README.md`](../companion/README.md) | Companion app overview & build instructions |
 
 ## Companion app
 
-The Flutter companion (`aura_companion/`, separate repository) has its own
-[`README.md`](../../aura_companion/README.md) and
-[`docs/supabase.md`](../../aura_companion/docs/supabase.md) for the Supabase
+The Flutter companion (`companion/`) has its own
+[`README.md`](../companion/README.md) and
+[`docs/supabase.md`](../companion/docs/supabase.md) for the Supabase
 cloud integration.
